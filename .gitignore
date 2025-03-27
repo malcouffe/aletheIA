@@ -1,4 +1,4 @@
-# Ignorer l'environnement virtuel
 .venv/
 data/
 example.py
+*__pycache__
