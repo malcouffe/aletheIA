@@ -1,4 +1,7 @@
 .venv/
 data/
 example.py
-*__pycache__
+images_extraites/
+mistralOCR_image_alex.py
+pdf_database/
+*__pycache__/
