@@ -1,178 +1,135 @@
 # Analyseur de PDF avec Mistral OCR pour RAG
 
 ## Description
-Ce programme analyse les documents PDF pour en extraire le texte, les images et les tableaux en utilisant l'API Mistral OCR. Il génère ensuite des embeddings pour ces contenus et les stocke dans une base de données vectorielle, prêt à être utilisé dans un système de Retrieval-Augmented Generation (RAG). Il peut également exporter tous les éléments extraits dans un dossier local organisé.
+Ce programme est un processeur de documents PDF qui utilise l'API Mistral OCR pour extraire et structurer le contenu. Il est spécialement conçu pour préparer des documents à utiliser dans un système RAG (Retrieval-Augmented Generation). Le processeur extrait intelligemment le texte, les images et les tableaux, génère des embeddings pour chaque élément, et stocke le tout dans une base de données vectorielle.
 
 ## Fonctionnalités
-- Extraction complète du texte avec découpage intelligent en chunks
-- Détection et sauvegarde des images
-- Détection spécifique des tableaux
-- Tentative de récupération des légendes pour les images et tableaux
-- Extraction de métadonnées (titre, auteur, date)
-- Génération d'embeddings pour tous les contenus
-- Stockage dans une base de données vectorielle (ChromaDB)
-- Organisation claire des résultats (texte, images, tableaux)
-- **Nouveau:** Exportation des éléments extraits dans un dossier local
-- **Nouveau:** Options en ligne de commande pour plus de flexibilité
+- Extraction intelligente du texte avec OCR via Mistral
+- Détection et extraction des images avec exclusion automatique des tableaux
+- Détection avancée des tableaux (via propriété native et fallback par regex)
+- Extraction automatique des légendes et du contexte pour les images
+- Nettoyage et structuration des tableaux en format Markdown
+- Extraction des métadonnées (titre, auteur, date) depuis les premières pages
+- Découpage intelligent du texte en chunks avec chevauchement configurable
+- Génération d'embeddings pour tous les types de contenus
+- Stockage optimisé dans ChromaDB avec métadonnées enrichies
+- Export structuré des éléments dans un dossier daté
 
 ## Prérequis
-Pour utiliser ce programme, vous devez installer les dépendances suivantes:
-```
+```bash
 pip install mistralai pillow datauri sentence-transformers langchain chromadb
 ```
 
 ## Configuration
-1. Modifiez la clé API Mistral dans le script:
-```python
-API_KEY = "votre_clé_api_mistral"
+1. Configurez votre clé API Mistral dans une variable d'environnement :
+```bash
+export MISTRAL_API_KEY="votre_clé_api"
 ```
 
-2. Configurez les paramètres selon vos besoins:
+2. Les principaux paramètres sont configurables en début de fichier :
 ```python
-# Dossier pour les images extraites
-IMAGE_DIR = "images_extraites"
+# Dossiers de stockage
+IMAGE_DIR = "data/output/images"
+TABLE_DIR = "data/output/tables"
+EXPORT_BASE_DIR = "data/output"
 
-# Dossier pour l'exportation des éléments
-EXPORT_BASE_DIR = "./data/output"
+# Paramètres de découpage
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
 
-# Paramètres pour le découpage du texte
-CHUNK_SIZE = 1000     # Taille de chaque morceau 
-CHUNK_OVERLAP = 200   # Chevauchement entre les morceaux
-
-# Modèle d'embeddings
+# Modèle d'embeddings et stockage
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-
-# Chemin de la base de données
-DB_PATH = "./vectordb"
+DB_PATH = "data/vectordb"
 ```
 
 ## Utilisation
-### Ligne de commande
+### En ligne de commande
 
-Le script supporte désormais plusieurs modes d'utilisation :
+```bash
+# Analyse complète avec export
+python pdf_processor.py /chemin/vers/document.pdf
 
-1. **Analyse et exportation (mode par défaut)** :
-   ```
-   python mistral_pdf_analyzer.py chemin/vers/votre/document.pdf
-   ```
-   Cette commande va à la fois analyser le PDF, stocker les données dans ChromaDB et exporter les éléments dans un dossier.
+# Mode interactif
+python pdf_processor.py
+```
 
-2. **Analyse sans exportation** :
-   ```
-   python mistral_pdf_analyzer.py chemin/vers/votre/document.pdf --no-export
-   ```
-   Cette commande analyse le PDF et stocke les données dans ChromaDB sans les exporter.
+### En tant que module
 
-3. **Exportation uniquement** :
-   ```
-   python mistral_pdf_analyzer.py chemin/vers/votre/document.pdf --export-only
-   ```
-   Cette commande exporte les éléments d'un PDF déjà analysé, sans refaire l'analyse.
+```python
+from utils.pipeline_indexation.pdf_processor import analyser_pdf
 
-4. **Utilisation par défaut** :
-   ```
-   python mistral_pdf_analyzer.py
-   ```
-   Sans arguments, le script utilisera le PDF par défaut configuré dans le code.
+# Analyse avec export
+resultat = analyser_pdf("document.pdf", exporter=True)
+
+# Analyse sans export
+resultat = analyser_pdf("document.pdf", exporter=False)
+```
 
 ### Structure des fichiers exportés
 
-Les éléments exportés sont organisés dans un dossier daté, avec la structure suivante :
 ```
-data/output/nom_du_fichier_date_heure/
-  ├── texte/                    # Dossier contenant les chunks de texte individuels
-  │   ├── chunk_000.txt
-  │   ├── chunk_001.txt
-  │   └── ...
-  ├── images/                   # Dossier contenant les images extraites
-  │   ├── page1_image0.jpeg
-  │   ├── page1_image0.jpeg.txt # Métadonnées de l'image
-  │   └── ...
-  ├── tableaux/                 # Dossier contenant les tableaux extraits
-  │   ├── page2_tableau0.jpeg
-  │   ├── page2_tableau0.jpeg.txt # Métadonnées du tableau
-  │   └── ...
-  ├── texte_complet.txt         # Fichier contenant tout le texte
-  └── resume.txt                # Résumé de l'exportation
+data/output/nom_fichier_YYYYMMDD_HHMMSS/
+├── texte/
+│   ├── texte_complet.txt     # Texte intégral
+│   ├── chunk_000.txt         # Chunks individuels
+│   └── ...
+├── images/
+│   ├── pageX_imageY.jpeg     # Images extraites
+│   └── ...
+└── tableaux/
+    ├── pageX_tableauY.txt    # Tableaux en format Markdown
+    └── ...
 ```
 
-## Structure du code
-Le code est organisé en sections claires:
-1. **Imports et configuration** - Bibliothèques et paramètres
-2. **Fonctions principales** - Structure générale du processus
-3. **Fonction d'exportation** - Exportation des éléments dans un dossier local
-4. **Extraction de contenu** - Fonctions pour extraire texte, images, tableaux et métadonnées
-5. **Traitement des données** - Découpage du texte et génération d'embeddings
-6. **Stockage vectoriel** - Intégration avec ChromaDB
-7. **Fonctions auxiliaires** - Utilitaires pour le traitement des contenus
-8. **Point d'entrée principal** - Exécution du programme avec gestion des arguments
+## Architecture du code
+Le processeur est organisé en sections fonctionnelles distinctes :
+
+1. **Configuration et initialisation**
+   - Configuration des chemins et paramètres
+   - Initialisation des dossiers nécessaires
+
+2. **Fonction principale `analyser_pdf()`**
+   - Orchestre le processus complet d'analyse
+   - Gère les différentes étapes d'extraction et de traitement
+
+3. **Extraction de contenu**
+   - `traiter_pdf_avec_mistral()` : OCR via API Mistral
+   - `extraire_texte_propre()` : Extraction du texte brut
+   - `extraire_images_sans_tableaux()` : Gestion des images
+   - `detecter_tableaux()` : Détection multi-méthodes des tableaux
+
+4. **Traitement avancé**
+   - `clean_table_structure()` : Nettoyage des tableaux
+   - `extraire_metadonnees()` : Extraction des métadonnées
+   - `decouper_texte()` : Découpage intelligent du texte
+
+5. **Génération d'embeddings**
+   - Fonctions spécialisées pour texte, images et tableaux
+   - Gestion du contexte et des descriptions
+
+6. **Stockage et export**
+   - `stocker_dans_base_vectorielle()` : Intégration ChromaDB
+   - `exporter_elements()` : Export structuré des contenus
 
 ## Utilisation dans un système RAG
-Une fois le traitement terminé, vous pouvez utiliser la base vectorielle pour:
-1. Rechercher du contenu similaire à une requête:
+La base vectorielle peut être interrogée efficacement :
+
 ```python
 import chromadb
 
-# Connexion à la base
-client = chromadb.PersistentClient(path="./vectordb")
+client = chromadb.PersistentClient(path="data/vectordb")
 collection = client.get_collection("pdf_collection")
 
-# Recherche (exemple)
-resultat = collection.query(
-    query_texts=["ma question sur le document"],
-    n_results=5
-)
-
-# Accéder aux résultats
-for doc in resultat["documents"][0]:
-    print(doc)
-```
-
-2. Filtrer par type de contenu:
-```python
-# Recherche uniquement dans le texte
-resultat = collection.query(
-    query_texts=["ma question"],
-    where={"type": "text"},
-    n_results=3
-)
-
-# Ou uniquement dans les tableaux
-resultat = collection.query(
-    query_texts=["statistiques annuelles"],
-    where={"type": "table"},
-    n_results=3
-)
-```
-
-## Exemple complet
-```python
-from mistral_pdf_analyzer import analyser_pdf
-import chromadb
-
-# Analyser un PDF
-resultat = analyser_pdf("mon_document.pdf")
-print(f"Éléments indexés: {len(resultat['ids_stockes'])}")
-
-# Rechercher dans la base
-client = chromadb.PersistentClient(path="./vectordb")
-collection = client.get_collection("pdf_collection")
+# Recherche par type de contenu
 resultats = collection.query(
-    query_texts=["résumé des points clés"],
+    query_texts=["ma recherche"],
+    where={"type": "text"},  # ou "image" ou "table"
     n_results=3
 )
 
-# Afficher les résultats
-for doc in resultats["documents"][0]:
-    print("---")
-    print(doc)
-``` 
-
-## Travail avec les fichiers exportés
-Une fois les fichiers exportés, vous pouvez les utiliser de plusieurs façons :
-
-1. **Consultation directe** : Tous les éléments sont exportés dans un format facilement consultable (texte, images JPEG)
-
-2. **Importation dans d'autres outils** : Les fichiers texte peuvent être importés dans d'autres outils d'analyse
-
-3. **Archivage** : Conservez une copie locale des éléments extraits pour consultation ultérieure, même sans accès à la base de données vectorielle 
+# Affichage des résultats
+for doc, meta in zip(resultats["documents"][0], resultats["metadatas"][0]):
+    print(f"Type: {meta['type']}")
+    print(f"Source: Page {meta.get('page', 'N/A')}")
+    print(f"Contenu: {doc}\n")
+```
