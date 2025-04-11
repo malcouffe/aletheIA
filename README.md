@@ -1,319 +1,178 @@
-# PDF Indexer
+# Analyseur de PDF avec Mistral OCR pour RAG
 
-Cette application permet d'indexer des fichiers PDF en utilisant des embeddings et de stocker les données dans une base de données ChromaDB pour une recherche sémantique efficace.
-
-## Installation
-
-```bash
-pip install -r requirements.txt
-```
+## Description
+Ce programme analyse les documents PDF pour en extraire le texte, les images et les tableaux en utilisant l'API Mistral OCR. Il génère ensuite des embeddings pour ces contenus et les stocke dans une base de données vectorielle, prêt à être utilisé dans un système de Retrieval-Augmented Generation (RAG). Il peut également exporter tous les éléments extraits dans un dossier local organisé.
 
 ## Fonctionnalités
+- Extraction complète du texte avec découpage intelligent en chunks
+- Détection et sauvegarde des images
+- Détection spécifique des tableaux
+- Tentative de récupération des légendes pour les images et tableaux
+- Extraction de métadonnées (titre, auteur, date)
+- Génération d'embeddings pour tous les contenus
+- Stockage dans une base de données vectorielle (ChromaDB)
+- Organisation claire des résultats (texte, images, tableaux)
+- **Nouveau:** Exportation des éléments extraits dans un dossier local
+- **Nouveau:** Options en ligne de commande pour plus de flexibilité
 
-- Import de documents PDF
-- Découpage des documents en chunks
-- Extraction des métadonnées (auteur, date, mots-clés, etc.)
-- **Extraction intelligente des images et graphiques des PDF**
-- **Détection et classification automatique des graphiques, figures et images**
-- **Extraction des légendes des images et figures**
-- **OCR avec Mistral pour une extraction de texte et d'images de haute qualité**
-- Embedding des chunks avec HuggingFace
-- Stockage dans une base de données ChromaDB
+## Prérequis
+Pour utiliser ce programme, vous devez installer les dépendances suivantes:
+```
+pip install mistralai pillow datauri sentence-transformers langchain chromadb
+```
 
-## Structure des fichiers
+## Configuration
+1. Modifiez la clé API Mistral dans le script:
+```python
+API_KEY = "votre_clé_api_mistral"
+```
 
-- `add_pdf.py` - Script pour ajouter un seul fichier PDF à la base de données
-- `add_pdf_dir.py` - Script pour ajouter tous les fichiers PDF d'un répertoire
-- `search.py` - Script pour rechercher dans la base de données
-- `utils/pipeline_indexation/pdf.py` - Classe PDFProcessor implémentant la logique d'indexation
-- `utils/mistral_ocr.py` - Module pour traiter les PDF avec Mistral OCR
+2. Configurez les paramètres selon vos besoins:
+```python
+# Dossier pour les images extraites
+IMAGE_DIR = "images_extraites"
+
+# Dossier pour l'exportation des éléments
+EXPORT_BASE_DIR = "./data/output"
+
+# Paramètres pour le découpage du texte
+CHUNK_SIZE = 1000     # Taille de chaque morceau 
+CHUNK_OVERLAP = 200   # Chevauchement entre les morceaux
+
+# Modèle d'embeddings
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+# Chemin de la base de données
+DB_PATH = "./vectordb"
+```
 
 ## Utilisation
+### Ligne de commande
 
-### Indexer un fichier PDF
+Le script supporte désormais plusieurs modes d'utilisation :
 
-Le script `add_pdf.py` vous permet d'ajouter des fichiers PDF à la base de données un par un :
+1. **Analyse et exportation (mode par défaut)** :
+   ```
+   python mistral_pdf_analyzer.py chemin/vers/votre/document.pdf
+   ```
+   Cette commande va à la fois analyser le PDF, stocker les données dans ChromaDB et exporter les éléments dans un dossier.
 
-```bash
-python add_pdf.py chemin/vers/votre/document.pdf
+2. **Analyse sans exportation** :
+   ```
+   python mistral_pdf_analyzer.py chemin/vers/votre/document.pdf --no-export
+   ```
+   Cette commande analyse le PDF et stocke les données dans ChromaDB sans les exporter.
+
+3. **Exportation uniquement** :
+   ```
+   python mistral_pdf_analyzer.py chemin/vers/votre/document.pdf --export-only
+   ```
+   Cette commande exporte les éléments d'un PDF déjà analysé, sans refaire l'analyse.
+
+4. **Utilisation par défaut** :
+   ```
+   python mistral_pdf_analyzer.py
+   ```
+   Sans arguments, le script utilisera le PDF par défaut configuré dans le code.
+
+### Structure des fichiers exportés
+
+Les éléments exportés sont organisés dans un dossier daté, avec la structure suivante :
+```
+data/output/nom_du_fichier_date_heure/
+  ├── texte/                    # Dossier contenant les chunks de texte individuels
+  │   ├── chunk_000.txt
+  │   ├── chunk_001.txt
+  │   └── ...
+  ├── images/                   # Dossier contenant les images extraites
+  │   ├── page1_image0.jpeg
+  │   ├── page1_image0.jpeg.txt # Métadonnées de l'image
+  │   └── ...
+  ├── tableaux/                 # Dossier contenant les tableaux extraits
+  │   ├── page2_tableau0.jpeg
+  │   ├── page2_tableau0.jpeg.txt # Métadonnées du tableau
+  │   └── ...
+  ├── texte_complet.txt         # Fichier contenant tout le texte
+  └── resume.txt                # Résumé de l'exportation
 ```
 
-Options disponibles :
-```
---db-path PATH      Chemin vers la base de données Chroma (défaut: ./pdf_database)
---collection NAME   Nom de la collection dans Chroma (défaut: pdf_documents)
---chunk-size SIZE   Taille des chunks de texte (défaut: 1000)
---chunk-overlap SIZE Chevauchement entre les chunks (défaut: 200)
---model NAME        Modèle HuggingFace pour les embeddings
---no-images         Ne pas extraire les images du PDF
---image-min-size N  Taille minimale des images à extraire en pixels (défaut: 100)
---store-image-content Stocker le contenu des images en base64 dans les métadonnées
---use-mistral-ocr   Utiliser Mistral OCR pour le traitement du PDF
---mistral-api-key KEY Clé API pour Mistral AI (requise si --use-mistral-ocr est utilisé)
---image-output-dir PATH Répertoire pour sauvegarder les images extraites (défaut: ./images_extraites)
-```
+## Structure du code
+Le code est organisé en sections claires:
+1. **Imports et configuration** - Bibliothèques et paramètres
+2. **Fonctions principales** - Structure générale du processus
+3. **Fonction d'exportation** - Exportation des éléments dans un dossier local
+4. **Extraction de contenu** - Fonctions pour extraire texte, images, tableaux et métadonnées
+5. **Traitement des données** - Découpage du texte et génération d'embeddings
+6. **Stockage vectoriel** - Intégration avec ChromaDB
+7. **Fonctions auxiliaires** - Utilitaires pour le traitement des contenus
+8. **Point d'entrée principal** - Exécution du programme avec gestion des arguments
 
-Exemple avec Mistral OCR :
-```bash
-python add_pdf.py document.pdf --use-mistral-ocr --mistral-api-key VOTRE_CLE_API
-```
-
-### Indexer un répertoire de fichiers PDF
-
-Le script `add_pdf_dir.py` vous permet d'ajouter tous les fichiers PDF d'un répertoire à la base de données :
-
-```bash
-python add_pdf_dir.py chemin/vers/votre/repertoire
-```
-
-Options disponibles :
-```
---db-path PATH      Chemin vers la base de données Chroma (défaut: ./pdf_database)
---collection NAME   Nom de la collection dans Chroma (défaut: pdf_documents)
---chunk-size SIZE   Taille des chunks de texte (défaut: 1000)
---chunk-overlap SIZE Chevauchement entre les chunks (défaut: 200)
---model NAME        Modèle HuggingFace pour les embeddings
---no-images         Ne pas extraire les images du PDF
---image-min-size N  Taille minimale des images à extraire en pixels (défaut: 100)
---store-image-content Stocker le contenu des images en base64 dans les métadonnées
---use-mistral-ocr   Utiliser Mistral OCR pour le traitement du PDF
---mistral-api-key KEY Clé API pour Mistral AI (requise si --use-mistral-ocr est utilisé)
---image-output-dir PATH Répertoire pour sauvegarder les images extraites (défaut: ./images_extraites)
-```
-
-Exemple avec Mistral OCR et un répertoire personnalisé pour les images :
-```bash
-python add_pdf_dir.py dossier_documents/ --use-mistral-ocr --mistral-api-key VOTRE_CLE_API --image-output-dir ./images_OCR
-```
-
-### Rechercher dans les documents indexés
-
-Le script `search.py` vous permet de rechercher dans votre base de données de PDF :
-
-```bash
-python search.py "votre requête de recherche"
-```
-
-Options disponibles :
-```
---db-path PATH      Chemin vers la base de données Chroma (défaut: ./pdf_database)
---collection NAME   Nom de la collection dans Chroma (défaut: pdf_documents)
---results N         Nombre de résultats à afficher (défaut: 5)
---model NAME        Modèle HuggingFace pour les embeddings
---filter KEY=VALUE  Filtrer les résultats (ex: content_type=image)
---graphs-only       Rechercher uniquement dans les graphiques et diagrammes
---images-only       Rechercher uniquement dans les images
---text-only         Rechercher uniquement dans le texte
-```
-
-Exemple avec des options personnalisées :
-```bash
-python search.py "intelligence artificielle" --db-path ./ma_base --collection mes_pdfs --results 10
-```
-
-Pour rechercher uniquement parmi les graphiques et diagrammes :
-```bash
-python search.py "évolution économique" --graphs-only
-```
-
-Pour rechercher uniquement parmi les images :
-```bash
-python search.py "diagramme financier" --images-only
-```
-
-Pour rechercher uniquement dans le texte :
-```bash
-python search.py "innovation technologique" --text-only
-```
-
-### Utilisation via l'API Python
-
-#### Indexer un seul fichier PDF
-
+## Utilisation dans un système RAG
+Une fois le traitement terminé, vous pouvez utiliser la base vectorielle pour:
+1. Rechercher du contenu similaire à une requête:
 ```python
-from utils.pipeline_indexation.pdf import PDFProcessor
+import chromadb
 
-# Avec PyMuPDF (par défaut)
-processor = PDFProcessor(extract_images=True)
-doc_ids = processor.process_pdf("chemin/vers/votre/document.pdf")
-print(f"Ajout de {len(doc_ids)} éléments à la base de données")
+# Connexion à la base
+client = chromadb.PersistentClient(path="./vectordb")
+collection = client.get_collection("pdf_collection")
 
-# Avec Mistral OCR
-processor = PDFProcessor(
-    extract_images=True,
-    use_mistral_ocr=True,
-    mistral_api_key="VOTRE_CLE_API",
-    image_output_dir="./images_extraites"
+# Recherche (exemple)
+resultat = collection.query(
+    query_texts=["ma question sur le document"],
+    n_results=5
 )
-doc_ids = processor.process_pdf("chemin/vers/votre/document.pdf")
-print(f"Ajout de {len(doc_ids)} éléments à la base de données")
+
+# Accéder aux résultats
+for doc in resultat["documents"][0]:
+    print(doc)
 ```
 
-#### Indexer un répertoire de fichiers PDF
-
+2. Filtrer par type de contenu:
 ```python
-from utils.pipeline_indexation.pdf import PDFProcessor
-
-# Avec PyMuPDF (par défaut)
-processor = PDFProcessor(extract_images=True)
-results = processor.process_directory("chemin/vers/votre/repertoire/pdf")
-print(f"Traitement de {len(results)} fichiers PDF")
-
-# Avec Mistral OCR
-processor = PDFProcessor(
-    extract_images=True,
-    use_mistral_ocr=True,
-    mistral_api_key="VOTRE_CLE_API",
-    image_output_dir="./images_extraites"
+# Recherche uniquement dans le texte
+resultat = collection.query(
+    query_texts=["ma question"],
+    where={"type": "text"},
+    n_results=3
 )
-results = processor.process_directory("chemin/vers/votre/repertoire/pdf")
-print(f"Traitement de {len(results)} fichiers PDF")
+
+# Ou uniquement dans les tableaux
+resultat = collection.query(
+    query_texts=["statistiques annuelles"],
+    where={"type": "table"},
+    n_results=3
+)
 ```
 
-#### Rechercher dans les documents indexés
-
+## Exemple complet
 ```python
-from utils.pipeline_indexation.pdf import PDFProcessor
+from mistral_pdf_analyzer import analyser_pdf
+import chromadb
 
-processor = PDFProcessor()
+# Analyser un PDF
+resultat = analyser_pdf("mon_document.pdf")
+print(f"Éléments indexés: {len(resultat['ids_stockes'])}")
 
-# Recherche générale
-results = processor.search("votre requête de recherche", n_results=5)
-
-# Recherche uniquement dans les graphiques
-graph_results = processor.search(
-    "évolution économique", 
-    n_results=5,
-    filter_by={"type": "graph"}
+# Rechercher dans la base
+client = chromadb.PersistentClient(path="./vectordb")
+collection = client.get_collection("pdf_collection")
+resultats = collection.query(
+    query_texts=["résumé des points clés"],
+    n_results=3
 )
 
-# Recherche uniquement dans les images
-image_results = processor.search(
-    "diagramme financier", 
-    n_results=5,
-    filter_by={"content_type": "image"}
-)
+# Afficher les résultats
+for doc in resultats["documents"][0]:
+    print("---")
+    print(doc)
+``` 
 
-# Affichage des résultats
-for i, result in enumerate(results):
-    print(f"Résultat {i+1}:")
-    print(f"Source: {result['metadata'].get('filename', 'Inconnu')}")
-    print(f"Titre: {result['metadata'].get('title', 'Inconnu')}")
-    print(f"Texte: {result['text'][:100]}...")
-```
+## Travail avec les fichiers exportés
+Une fois les fichiers exportés, vous pouvez les utiliser de plusieurs façons :
 
-## Traitement des PDF avec Mistral OCR
+1. **Consultation directe** : Tous les éléments sont exportés dans un format facilement consultable (texte, images JPEG)
 
-Le système propose désormais une intégration avec Mistral OCR pour une extraction de texte et d'images de haute qualité.
+2. **Importation dans d'autres outils** : Les fichiers texte peuvent être importés dans d'autres outils d'analyse
 
-### Avantages de Mistral OCR
-
-1. **Qualité d'extraction supérieure** - Mistral OCR offre une reconnaissance de texte de pointe, particulièrement efficace pour les documents complexes ou scannés.
-2. **Détection avancée des images** - Extraction précise des images même dans des layouts complexes.
-3. **Classification intelligente** - Détection automatique des figures, tableaux et graphiques.
-4. **Extraction de légendes** - Identifie automatiquement les légendes associées aux images.
-5. **Analyses multimodales** - Comprend le lien entre le texte et les éléments visuels.
-
-### Utilisation de Mistral OCR
-
-Pour utiliser Mistral OCR, vous devez d'abord obtenir une clé API auprès de Mistral AI. Une fois la clé obtenue, vous pouvez utiliser Mistral OCR de deux façons :
-
-1. **Via la ligne de commande** :
-   ```bash
-   python add_pdf.py document.pdf --use-mistral-ocr --mistral-api-key VOTRE_CLE_API
-   ```
-
-2. **Via une variable d'environnement** :
-   ```bash
-   export MISTRAL_API_KEY="VOTRE_CLE_API"
-   python add_pdf.py document.pdf --use-mistral-ocr
-   ```
-
-3. **Dans votre code Python** :
-   ```python
-   processor = PDFProcessor(
-       use_mistral_ocr=True,
-       mistral_api_key="VOTRE_CLE_API",
-       image_output_dir="./images_extraites"
-   )
-   ```
-
-Les images extraites sont automatiquement sauvegardées dans le répertoire spécifié par `--image-output-dir` (par défaut : `./images_extraites`). Chaque document PDF a son propre sous-répertoire pour faciliter l'organisation.
-
-## Traitement amélioré des graphiques et figures
-
-Le système intègre maintenant des algorithmes améliorés pour détecter et classifier les images :
-
-1. **Détection avancée d'images** - Utilise multiple méthodes pour extraire les images même lorsque la méthode standard échoue.
-2. **Classification intelligente** - Analyse les images pour déterminer s'il s'agit de graphiques, figures ou images simples.
-3. **Extraction de légendes** - Tente d'extraire automatiquement les légendes associées aux images.
-4. **Analyse de contexte** - Utilise le texte environnant pour mieux comprendre le contenu de l'image.
-5. **Filtrage amélioré** - Permet de rechercher spécifiquement des graphiques avec l'option `--graphs-only`.
-
-### Méthodes de détection d'images
-
-Le système utilise plusieurs méthodes pour maximiser la détection d'images :
-
-1. **PyMuPDF (standard)** - Utilise `page.get_images()` et `doc.extract_image()`.
-2. **PyMuPDF (alternative)** - Utilise `page.get_text("dict")` pour trouver les images non détectées par la méthode standard.
-3. **Mistral OCR** - Utilise les capacités avancées de l'API Mistral OCR pour détecter les images et leur contexte.
-4. **Analyse d'image** - Utilise des heuristiques basées sur le nombre de couleurs et la détection de bords pour classifier les graphiques.
-
-Pour désactiver l'extraction d'images :
-```bash
-python add_pdf.py document.pdf --no-images
-```
-
-## Personnalisation
-
-Vous pouvez personnaliser le processeur PDF en modifiant les paramètres:
-
-```python
-processor = PDFProcessor(
-    chroma_path="./custom_chroma_path",
-    collection_name="custom_collection",
-    chunk_size=500,
-    chunk_overlap=50,
-    model_name="sentence-transformers/all-mpnet-base-v2",
-    extract_images=True,
-    image_min_size=200,  # Taille minimale en pixels
-    store_image_content=False,  # Ne pas stocker le contenu des images
-    use_mistral_ocr=True,  # Utiliser Mistral OCR
-    mistral_api_key="VOTRE_CLE_API",  # Clé API Mistral
-    image_output_dir="./images_extraites"  # Répertoire pour les images
-)
-```
-
-## Workflow recommandé
-
-1. **Ajoutez des documents individuels** au fur et à mesure que vous les recevez :
-   ```bash
-   python add_pdf.py nouveau_document.pdf
-   ```
-   Ou avec Mistral OCR pour une meilleure qualité :
-   ```bash
-   python add_pdf.py nouveau_document.pdf --use-mistral-ocr --mistral-api-key VOTRE_CLE_API
-   ```
-
-2. **Ajoutez des collections entières** de documents quand vous avez un lot à traiter :
-   ```bash
-   python add_pdf_dir.py dossier_documents/
-   ```
-   Ou avec Mistral OCR :
-   ```bash
-   python add_pdf_dir.py dossier_documents/ --use-mistral-ocr --mistral-api-key VOTRE_CLE_API
-   ```
-
-3. **Recherchez dans votre base de connaissances** :
-   ```bash
-   python search.py "votre question ou requête"
-   ```
-   
-4. **Recherchez spécifiquement dans les graphiques et diagrammes** :
-   ```bash
-   python search.py "évolution économique" --graphs-only
-   ```
-
-## Documentation du code
-
-Pour plus de détails, consultez les docstrings dans le code source. 
+3. **Archivage** : Conservez une copie locale des éléments extraits pour consultation ultérieure, même sans accès à la base de données vectorielle 

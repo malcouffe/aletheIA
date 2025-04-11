@@ -5,3 +5,5 @@ images_extraites/
 mistralOCR_image_alex.py
 pdf_database/
 *__pycache__/
+vectordb
+*.ipynb
