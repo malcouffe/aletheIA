@@ -1,8 +1,28 @@
+# Base packages
 pymupdf==1.23.8
+pillow>=11.0.0,<11.2.0
+numpy==1.26.3
+pandas==2.2.0
+
+# LangChain et RAG
 langchain==0.1.4
 langchain-community==0.0.16
 chromadb==0.4.22
 sentence-transformers==2.2.2
-pillow==10.2.0
+
+# Mistral AI
 mistralai==0.1.6
-datauri==1.1.0
+datauri==1.0.0
+
+# UI et visualisation
+streamlit>=1.31.0
+matplotlib==3.8.2
+seaborn==0.13.1
+
+# Agents et outils
+smolagents[openai]==1.13.0
+smolagents[duckduckgo]==1.13.0
+smolagents[webpage]==1.13.0
+
+# Utilitaires
+chardet>=4.0.0
