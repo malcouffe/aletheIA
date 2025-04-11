@@ -7,3 +7,4 @@ pdf_database/
 *__pycache__/
 vectordb
 *.ipynb
+APIKEYS.txt
