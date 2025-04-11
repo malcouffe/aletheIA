@@ -28,7 +28,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # -------- CONFIGURATION --------
 # Votre clé API Mistral
-API_KEY = "XV9ZzvMwQhjO4tqbJoMmEMxW1WFU9TZF"
+# On a enregistré la clé API dans une variable d'environnement pour la sécurité (avec export MISTRAL_API_KEY=...)
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
 
 # Dossier où les images extraites seront sauvegardées
 IMAGE_DIR = "images_extraites"
