@@ -1,0 +1,538 @@
+"""
+ANALYSEUR PDF AVEC MISTRAL OCR POUR RAG
+---------------------------------------
+Ce script permet d'extraire le texte, les images et les tableaux d'un document PDF,
+de générer des embeddings, de stocker ces données dans une base vectorielle,
+et d'exporter les éléments dans un dossier local.
+"""
+
+import os
+import re
+import sys
+import shutil
+import hashlib
+from datetime import datetime
+from io import BytesIO
+
+from PIL import Image
+import datauri
+from mistralai import Mistral
+
+from sentence_transformers import SentenceTransformer
+import chromadb
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+# -------- CONFIGURATION --------
+MISTRAL_API_KEY = os.environ["MISTRAL_API_KEY"]
+print("Clé Mistral :", MISTRAL_API_KEY)
+
+# Dossiers de stockage temporaires pour l'indexation
+IMAGE_DIR = "data/output/images"
+TABLE_DIR = "data/output/tables"  # Dossier dédié aux tableaux
+EXPORT_BASE_DIR = "data/output"
+for d in [IMAGE_DIR, TABLE_DIR, EXPORT_BASE_DIR]:
+    os.makedirs(d, exist_ok=True)
+
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
+
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+# On définira DB_PATH en fonction du thème choisi par l'utilisateur
+DB_PATH = None
+
+
+# -------- FONCTION PRINCIPALE --------
+
+def analyser_pdf(chemin_pdf, exporter=True):
+    print(f"Analyse du PDF: {chemin_pdf}")
+    client = Mistral(api_key=MISTRAL_API_KEY)
+
+    # 1. Traitement OCR
+    resultat_ocr = traiter_pdf_avec_mistral(client, chemin_pdf)
+
+    # 2. Extraction des contenus
+    texte = extraire_texte_propre(resultat_ocr)
+    images = extraire_images_sans_tableaux(resultat_ocr)
+    tableaux = detecter_tableaux(resultat_ocr)
+    metadonnees = extraire_metadonnees(resultat_ocr, chemin_pdf)
+
+    # 3. Découpage du texte
+    chunks = decouper_texte(texte)
+
+    # 4. Calcul des embeddings
+    modele_embeddings = SentenceTransformer(EMBEDDING_MODEL)
+    emb_text = generer_embeddings(modele_embeddings, chunks)
+    emb_imgs = generer_embeddings_images(modele_embeddings, images)
+    emb_tabs = generer_embeddings_images(modele_embeddings, tableaux, est_tableau=True)
+
+    # 5. Stockage vectoriel
+    stock_ids = stocker_dans_base_vectorielle(
+        chemin_pdf,
+        chunks, emb_text,
+        images, emb_imgs,
+        tableaux, emb_tabs,
+        metadonnees
+    )
+
+    resume = {
+        "fichier": chemin_pdf,
+        "chunks_texte": len(chunks),
+        "images": len(images),
+        "tableaux": len(tableaux),
+        "ids_stockes": stock_ids
+    }
+    print(f"Analyse terminée : {len(chunks)} chunks, {len(images)} images, {len(tableaux)} tableaux")
+
+    # 6. Export des contenus et suppression des fichiers temporaires
+    if exporter:
+        dossier_export = exporter_elements(chemin_pdf, texte, chunks)
+        resume["dossier_export"] = dossier_export
+
+    return resume
+
+
+# -------- TRAITEMENT OCR --------
+
+def traiter_pdf_avec_mistral(client, chemin_pdf):
+    print("Envoi du PDF à Mistral OCR...")
+    with open(chemin_pdf, "rb") as f:
+        pdf_data = f.read()
+    uploaded = client.files.upload(
+        file={"file_name": chemin_pdf, "content": pdf_data},
+        purpose="ocr"
+    )
+    signed_url = client.files.get_signed_url(file_id=uploaded.id)
+    response = client.ocr.process(
+        model="mistral-ocr-latest",
+        document={"type": "document_url", "document_url": signed_url.url},
+        include_image_base64=True
+    )
+    print("Traitement OCR terminé")
+    return response
+
+
+# -------- EXTRACTION DU TEXTE --------
+
+def extraire_texte_propre(resultat_ocr):
+    print("Extraction du texte...")
+    texte_complet = ""
+    for page in resultat_ocr.pages:
+        if page.markdown:
+            texte_complet += page.markdown + "\n\n"
+    return texte_complet
+
+
+# -------- EXTRACTION DES IMAGES --------
+
+def extraire_images_sans_tableaux(resultat_ocr):
+    """
+    Extrait les images en ignorant celles dont l'ID est présent dans la propriété 'tables' de la page.
+    Enregistre les images sous "pageX_imageY.jpeg" dans IMAGE_DIR.
+    """
+    print("Extraction des images (en excluant les tableaux) ...")
+    images_info = []
+    for page_idx, page in enumerate(resultat_ocr.pages, 1):
+        table_ids = set()
+        if hasattr(page, "tables") and page.tables:
+            for t in page.tables:
+                if hasattr(t, "id"):
+                    table_ids.add(t.id)
+        if not page.images:
+            continue
+        for i, image in enumerate(page.images):
+            if hasattr(image, "id") and image.id in table_ids:
+                continue  # Ignorer l'image déjà identifiée comme tableau
+            try:
+                data = datauri.parse(image.image_base64).data
+                pil_img = Image.open(BytesIO(data))
+                image_name = f"page{page_idx}_image{i}.jpeg"
+                image_path = os.path.join(IMAGE_DIR, image_name)
+                pil_img.save(image_path)
+                legende = extraire_legende(image, page.markdown)
+                contexte = extraire_contexte(image, page.markdown)
+                images_info.append({
+                    "page": page_idx,
+                    "chemin": image_path,
+                    "id": image.id,
+                    "largeur": pil_img.width,
+                    "hauteur": pil_img.height,
+                    "legende": legende,
+                    "type": "image",
+                    "contexte": contexte
+                })
+                print(f"  Image extraite: {image_path}")
+            except Exception as e:
+                print(f"Erreur lors du traitement d'une image: {str(e)}")
+    print(f"  Total images extraites: {len(images_info)}")
+    return images_info
+
+
+# -------- EXTRACTION DES TABLEAUX --------
+
+def detecter_tableaux(resultat_ocr):
+    """
+    Extrait les tableaux depuis la propriété 'tables' si disponible,
+    sinon utilise un fallback par regex.
+    Les tableaux sont enregistrés dans TABLE_DIR uniquement.
+    Un contrôle vérifie que le bloc comporte bien un séparateur Markdown.
+    """
+    print("Extraction des tableaux...")
+    tableaux_info = []
+
+    # Méthode 1 : Utilisation de la propriété 'tables'
+    for page_idx, page in enumerate(resultat_ocr.pages, 1):
+        if hasattr(page, "tables") and page.tables:
+            for idx, tbl in enumerate(page.tables):
+                tbl_markdown = getattr(tbl, "markdown", "")
+                cleaned, _ = clean_table_structure(tbl_markdown)
+                if not cleaned.strip():
+                    continue
+                table_name = f"page{page_idx}_tableau_{idx}.txt"
+                table_path = os.path.join(TABLE_DIR, table_name)
+                with open(table_path, "w", encoding="utf-8") as f:
+                    f.write(cleaned)
+                tableaux_info.append({
+                    "page": page_idx,
+                    "chemin": table_path,
+                    "id": getattr(tbl, "id", f"table_{page_idx}_{idx}"),
+                    "legende": "",
+                    "type": "tableau",
+                    "contexte": cleaned,
+                    "description": f"Tableau extrait à la page {page_idx} (via propriété)",
+                    "largeur": 0,
+                    "hauteur": 0
+                })
+                print(f"  Tableau extrait sur page {page_idx} -> {table_path}")
+
+    # Méthode 2 : Fallback par regex
+    if not tableaux_info:
+        regex = re.compile(r"""
+            (
+              ^\|.*\|\s*\n
+              ^\|(?:\s*[:-]+\s*\|)+\s*\n
+              (?:^\|.*\|\s*\n)*
+            )
+        """, re.MULTILINE | re.VERBOSE)
+        for page_idx, page in enumerate(resultat_ocr.pages, 1):
+            if page.markdown:
+                found = regex.findall(page.markdown)
+                for idx, table_text in enumerate(found):
+                    cleaned, _ = clean_table_structure(table_text)
+                    if not re.search(r"^\|\s*[-:]+\s*\|", cleaned, re.MULTILINE):
+                        continue
+                    table_name = f"page{page_idx}_tableau_{idx}.txt"
+                    table_path = os.path.join(TABLE_DIR, table_name)
+                    with open(table_path, "w", encoding="utf-8") as f:
+                        f.write(cleaned)
+                    tableaux_info.append({
+                        "page": page_idx,
+                        "chemin": table_path,
+                        "id": f"table_{page_idx}_{idx}",
+                        "legende": "",
+                        "type": "tableau",
+                        "contexte": cleaned,
+                        "description": f"Tableau extrait à la page {page_idx} (via regex)",
+                        "largeur": 0,
+                        "hauteur": 0
+                    })
+                    print(f"  (Fallback) Tableau détecté sur page {page_idx} -> {table_path}")
+
+    print(f"  {len(tableaux_info)} tableaux extraits au total")
+    return tableaux_info
+
+def clean_table_structure(table_text):
+    lines = table_text.strip().split("\n")
+    rows = [ [cell.strip() for cell in line.strip().strip("|").split("|")] for line in lines ]
+    if not rows:
+        return table_text, 0
+    max_cols = max(len(row) for row in rows)
+    corrected_lines = []
+    modif_count = 0
+    for original, row in zip(lines, rows):
+        if len(row) < max_cols:
+            row.extend([""] * (max_cols - len(row)))
+            modif_count += 1
+        corrected_lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(corrected_lines), modif_count
+
+
+# -------- MÉTADONNÉES --------
+
+def extraire_metadonnees(resultat_ocr, chemin_pdf):
+    print("Extraction des métadonnées...")
+    meta = {
+        "nom_fichier": os.path.basename(chemin_pdf),
+        "chemin": chemin_pdf,
+        "nombre_pages": len(resultat_ocr.pages)
+    }
+    debut = ""
+    for i, page in enumerate(resultat_ocr.pages):
+        if i < 2 and page.markdown:
+            debut += page.markdown + "\n"
+    for pat in [r"# (.*?)[\n\r]", r"^(.{5,100})[\n\r]"]:
+        m = re.search(pat, debut, re.MULTILINE)
+        if m:
+            meta["titre"] = m.group(1).strip()
+            break
+    for pat in [r"(?:Author|Auteur)[\s:]+(.{3,100})", r"(?:By|Par)[\s:]+(.{3,100})"]:
+        m = re.search(pat, debut, re.MULTILINE | re.IGNORECASE)
+        if m:
+            meta["auteur"] = m.group(1).strip()
+            break
+    for pat in [r"\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})\b"]:
+        m = re.search(pat, debut, re.MULTILINE)
+        if m:
+            meta["date"] = m.group(1).strip()
+            break
+    return meta
+
+
+# -------- DÉCOUPAGE DU TEXTE --------
+
+def decouper_texte(texte):
+    print(f"Découpage du texte (taille={CHUNK_SIZE}, chevauchement={CHUNK_OVERLAP})...")
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""]
+    )
+    chunks = splitter.split_text(texte)
+    print(f"  Texte découpé en {len(chunks)} chunks")
+    return chunks
+
+
+# -------- EMBEDDINGS --------
+
+def generer_embeddings(modele, textes):
+    print(f"Génération d'embeddings pour {len(textes)} textes...")
+    return modele.encode(textes, show_progress_bar=False)
+
+def generer_embeddings_images(modele, elements, est_tableau=False):
+    type_label = "tableaux" if est_tableau else "images"
+    print(f"Génération d'embeddings pour {len(elements)} {type_label}...")
+    descriptions = []
+    for el in elements:
+        desc = f"{'Tableau' if est_tableau else 'Image'} à la page {el['page']}"
+        if el.get("legende"):
+            desc += f". Légende: {el['legende']}"
+        if el.get("contexte"):
+            desc += f". Contexte: {el['contexte'][:200]}"
+        descriptions.append(desc)
+    if not descriptions:
+        return []
+    return modele.encode(descriptions, show_progress_bar=False)
+
+
+# -------- STOCKAGE VECTORIEL --------
+
+def stocker_dans_base_vectorielle(chemin_pdf, chunks, emb_textes, images, emb_images, tableaux, emb_tableaux, metadonnees):
+    print("Stockage dans la base vectorielle...")
+    client = chromadb.PersistentClient(path=DB_PATH)
+    collection_name = "pdf_collection"
+    try:
+        collection = client.get_collection(collection_name)
+        print(f"  Collection '{collection_name}' trouvée")
+    except Exception:
+        collection = client.create_collection(collection_name)
+        print(f"  Collection '{collection_name}' créée")
+
+    pdf_id = hashlib.md5(chemin_pdf.encode()).hexdigest()
+    nom_fichier = os.path.basename(chemin_pdf)
+    all_ids = []
+
+    # 1) Indexation du texte
+    for i, (chunk, emb) in enumerate(zip(chunks, emb_textes)):
+        doc_id = f"{pdf_id}_txt_{i}"
+        all_ids.append(doc_id)
+        meta = {
+            "document_id": pdf_id,
+            "filename": nom_fichier,
+            "type": "text",
+            "chunk_index": i,
+            "chunk_count": len(chunks)
+        }
+        meta.update({f"doc_{k}": v for k, v in metadonnees.items()})
+        collection.add(
+            ids=[doc_id],
+            embeddings=[emb.tolist()],
+            metadatas=[meta],
+            documents=[chunk]
+        )
+
+    # 2) Indexation des images
+    for i, (img, emb) in enumerate(zip(images, emb_images)):
+        doc_id = f"{pdf_id}_img_{i}"
+        all_ids.append(doc_id)
+        meta = {
+            "document_id": pdf_id,
+            "filename": nom_fichier,
+            "type": "image",
+            "page": img["page"],
+            "image_path": img["chemin"],
+            "width": img["largeur"],
+            "height": img["hauteur"]
+        }
+        if img.get("legende"):
+            meta["caption"] = img["legende"]
+        desc = f"Image à la page {img['page']}"
+        if img.get("legende"):
+            desc += f": {img['legende']}"
+        collection.add(
+            ids=[doc_id],
+            embeddings=[emb.tolist()],
+            metadatas=[meta],
+            documents=[desc]
+        )
+
+    # 3) Indexation des tableaux
+    for i, (tab, emb) in enumerate(zip(tableaux, emb_tableaux)):
+        doc_id = f"{pdf_id}_tab_{i}"
+        all_ids.append(doc_id)
+        meta = {
+            "document_id": pdf_id,
+            "filename": nom_fichier,
+            "type": "table",
+            "page": tab["page"],
+            "table_path": tab["chemin"],
+            "width": tab["largeur"],
+            "height": tab["hauteur"]
+        }
+        if tab.get("legende"):
+            meta["caption"] = tab["legende"]
+        desc = tab.get("description", f"Tableau à la page {tab['page']}")
+        collection.add(
+            ids=[doc_id],
+            embeddings=[emb.tolist()],
+            metadatas=[meta],
+            documents=[desc]
+        )
+
+    print(f"  {len(all_ids)} éléments stockés dans la base vectorielle")
+    return all_ids
+
+
+# -------- FONCTIONS AUXILIAIRES --------
+
+def extraire_legende(image, texte_markdown):
+    pattern = f"!\\[(.*?)\\]\\({image.id}\\)"
+    m = re.search(pattern, texte_markdown)
+    return m.group(1).strip() if m and m.group(1).strip() else ""
+
+def extraire_contexte(image, texte_markdown, contexte_taille=300):
+    m = re.search(f"!\\[.*?\\]\\({image.id}\\)", texte_markdown)
+    if not m:
+        return ""
+    debut = max(0, m.start() - contexte_taille)
+    fin = min(len(texte_markdown), m.end() + contexte_taille)
+    contexte = texte_markdown[debut:m.start()] + texte_markdown[m.end():fin]
+    return re.sub(r'!\[.*?\]\(.*?\)', '', contexte).strip()
+
+
+def vider_dossier(dir_path):
+    """
+    Supprime tous les fichiers dans un dossier sans supprimer le dossier lui-même.
+    """
+    for fichier in os.listdir(dir_path):
+        chemin = os.path.join(dir_path, fichier)
+        if os.path.isfile(chemin):
+            os.remove(chemin)
+        else:
+            shutil.rmtree(chemin)
+
+
+def exporter_elements(chemin_pdf, texte_complet, chunks):
+    """
+    Exporte le texte complet et les chunks dans /texte,
+    copie les images depuis IMAGE_DIR vers /images,
+    copie les tableaux depuis TABLE_DIR vers /tableaux.
+    Ensuite, vide les dossiers IMAGE_DIR et TABLE_DIR pour éviter les doublons.
+    """
+    nom_pdf = os.path.basename(chemin_pdf).replace('.pdf', '')
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    export_dir = os.path.join(EXPORT_BASE_DIR, f"{nom_pdf}_{timestamp}")
+
+    for sub in ["texte", "images", "tableaux"]:
+        os.makedirs(os.path.join(export_dir, sub), exist_ok=True)
+
+    print(f"Exportation des éléments pour {chemin_pdf} vers {export_dir} ...")
+    try:
+        # 1) Texte complet
+        chemin_tc = os.path.join(export_dir, "texte", "texte_complet.txt")
+        with open(chemin_tc, "w", encoding="utf-8") as f:
+            f.write(texte_complet)
+
+        # 2) Chunks de texte
+        for i, chunk in enumerate(chunks):
+            chunk_file = os.path.join(export_dir, "texte", f"chunk_{i:03d}.txt")
+            with open(chunk_file, "w", encoding="utf-8") as f:
+                f.write(chunk)
+
+        # 3) Copier les images depuis IMAGE_DIR
+        for file in os.listdir(IMAGE_DIR):
+            src = os.path.join(IMAGE_DIR, file)
+            dst = os.path.join(export_dir, "images", file)
+            shutil.copy2(src, dst)
+
+        # 4) Copier les tableaux depuis TABLE_DIR
+        for file in os.listdir(TABLE_DIR):
+            src = os.path.join(TABLE_DIR, file)
+            dst = os.path.join(export_dir, "tableaux", file)
+            shutil.copy2(src, dst)
+
+        print(f"Exportation terminée dans: {export_dir}")
+
+        # Suppression des fichiers temporaires
+        vider_dossier(IMAGE_DIR)
+        vider_dossier(TABLE_DIR)
+
+        return export_dir
+    except Exception as e:
+        print(f"Erreur lors de l'exportation: {str(e)}")
+        return None
+
+
+# -------- POINT D'ENTRÉE --------
+
+if __name__ == "__main__":
+    # Choix du PDF par argument ou par input
+    if len(sys.argv) > 1:
+        pdf_path = sys.argv[1]
+    else:
+        pdf_path = input("Veuillez entrer le chemin du fichier PDF à analyser: ")
+
+    pdf_path = os.path.abspath(pdf_path)
+    print(f"Chemin absolu: {pdf_path}")
+
+    if not os.path.isfile(pdf_path):
+        print(f"ERREUR: Le fichier '{pdf_path}' n'existe pas.")
+        sys.exit(1)
+
+    # Demande du thème du document
+    theme = ""
+    while theme not in ["LCB-FT", "Tokenisation"]:
+        theme = input("De quel thème ce document traite-t-il ? (LCB-FT ou Tokenisation): ").strip()
+        if theme not in ["LCB-FT", "Tokenisation"]:
+            print("Veuillez choisir entre 'LCB-FT' et 'Tokenisation'.")
+
+    # Définir la base de vecteurs selon le thème (2 bases distinctes)
+    DB_PATH = os.path.join("data", "output", "vectordb", theme)
+    os.makedirs(DB_PATH, exist_ok=True)
+    print(f"Base de données utilisée: {DB_PATH}")
+
+    resultat = analyser_pdf(pdf_path, exporter=True)
+
+    print("\n" + "=" * 50)
+    print("RÉSUMÉ DE L'INDEXATION:")
+    print(f"- Fichier: {resultat['fichier']}")
+    print(f"- Chunks de texte: {resultat['chunks_texte']}")
+    print(f"- Images: {resultat['images']}")
+    print(f"- Tableaux: {resultat['tableaux']}")
+    print(f"- Total éléments stockés: {len(resultat['ids_stockes'])}")
+    print(f"- Base de données: {DB_PATH}")
+
+    if "dossier_export" in resultat:
+        print(f"\nÉléments exportés dans: {resultat['dossier_export']}")
+        print("  |- texte/ (texte_complet.txt + chunks)")
+        print("  |- images/")
+        print("  |- tableaux/")
