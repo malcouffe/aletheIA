@@ -23,21 +23,12 @@ def route_request(query, csv_args, search_agent, data_analyst):
             "Votre tâche est d'analyser le fichier CSV fourni afin de répondre à la question posée. "
         )
         
-        # Si des additional_notes sont fournies, les inclure pour guider l'analyse.
-        if additional_notes:
-            prompt = (
-                f"{expertise_message}\n"
-                f"Analyse du fichier CSV: {query}\n\n"
-                f"Notes additionnelles fournies: {additional_notes}"
-            )
-        else:
-            # Si aucune note additionnelle n'est donnée, limiter l'analyse à trois insights et un plot.
-            prompt = (
-                f"{expertise_message}\n"
-                f"Analyse du fichier CSV: {query}\n\n"
-                "Directives additionnelles: Étant donné qu'aucune note n'est fournie, veuillez vous limiter à "
-                "l'analyse simple du fichier en identifiant trois insights clés et en générant un unique graphique pertinent."
-            )
+        # Construire le prompt en incluant les notes additionnelles
+        prompt = (
+            f"{expertise_message}\n"
+            f"Analyse du fichier CSV: {query}\n\n"
+            f"Notes additionnelles et contexte: {additional_notes}"
+        )
 
         # Préparer les arguments pour l'outil csv_analyzer.
         csv_analyzer_args = {
@@ -95,6 +86,13 @@ def main():
     # Option pour limiter l'utilisation de la mémoire.
     use_memory_limit = st.checkbox("Limiter l'utilisation de la mémoire (recommandé pour les grands fichiers)", value=True)
     chunk_size = 100000 if use_memory_limit else None
+    
+    # Permettre à l'utilisateur d'ajouter ses propres notes sur le fichier
+    user_notes = ""
+    if uploaded_file:
+        user_notes = st.text_area("Notes additionnelles sur le fichier", 
+                                  placeholder="Ajoutez ici vos observations, questions spécifiques ou contexte sur le fichier CSV...",
+                                  height=150)
     
     # Saisie de la requête utilisateur.
     user_query = st.text_input("Requête à envoyer à l'agent")
@@ -201,6 +199,9 @@ def main():
 
 # Colonnes détectées:
 {', '.join(columns)}
+
+# Notes de l'utilisateur:
+{user_notes if user_notes else "Aucune note spécifique fournie par l'utilisateur."}
 
 # Étapes recommandées:
 1. Validation du fichier CSV via csv_analyzer (déjà effectuée: {validation_message})
