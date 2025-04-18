@@ -1,0 +1,4 @@
+[server]
+runOnSave = false
+# L'option 'watchFiles' n'est plus valide 
+# Utilisez 'runOnSave' pour éviter les rechargements automatiques

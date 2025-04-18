@@ -1,10 +1,11 @@
 import streamlit as st
 import os
-import tempfile
 import shutil
 import uuid
+import tempfile
 from smolagents import CodeAgent, ToolCallingAgent, DuckDuckGoSearchTool, VisitWebpageTool, OpenAIServerModel
 from managed_agent.csv_analyzer_tool import CSVAnalyzerTool
+from utils.pipeline_indexation.csv_processor import CSVProcessor
 
 def route_request(query, csv_args, search_agent, data_analyst):
     """
@@ -13,10 +14,42 @@ def route_request(query, csv_args, search_agent, data_analyst):
     Sinon, la requête est envoyée à search_agent.
     """
     if csv_args is not None:
-        # Délégation à l'agent d'analyse de données pour traitement CSV
-        return data_analyst.run("Analyse du fichier CSV: " + query, additional_args=csv_args)
+        # Définir le prompt selon la présence ou non des additional_notes
+        additional_notes = csv_args.get('additional_notes', '').strip()
+        
+        # Message de base indiquant l'expertise en data-analysis
+        expertise_message = (
+            "Vous êtes un expert en data-analysis. "
+            "Votre tâche est d'analyser le fichier CSV fourni afin de répondre à la question posée. "
+        )
+        
+        # Si des additional_notes sont fournies, les inclure pour guider l'analyse.
+        if additional_notes:
+            prompt = (
+                f"{expertise_message}\n"
+                f"Analyse du fichier CSV: {query}\n\n"
+                f"Notes additionnelles fournies: {additional_notes}"
+            )
+        else:
+            # Si aucune note additionnelle n'est donnée, limiter l'analyse à trois insights et un plot.
+            prompt = (
+                f"{expertise_message}\n"
+                f"Analyse du fichier CSV: {query}\n\n"
+                "Directives additionnelles: Étant donné qu'aucune note n'est fournie, veuillez vous limiter à "
+                "l'analyse simple du fichier en identifiant trois insights clés et en générant un unique graphique pertinent."
+            )
+
+        # Préparer les arguments pour l'outil csv_analyzer.
+        csv_analyzer_args = {
+            "source_file": csv_args["source_file"],
+            "separator": csv_args["separator"],
+            "figures_dir": csv_args["figures_dir"],
+            "chunk_size": csv_args["chunk_size"]
+        }
+        
+        return data_analyst.run(prompt, additional_args={"csv_analyzer": csv_analyzer_args})
     else:
-        # Délégation à l'agent de recherche pour traiter la requête générale
+        # Délégation à l'agent de recherche pour traiter la requête générale.
         return search_agent.run(query)
 
 def cleanup_resources(figures_dir):
@@ -24,9 +57,8 @@ def cleanup_resources(figures_dir):
     Nettoie les ressources utilisées par les agents.
     
     Args:
-        figures_dir: Chemin vers le dossier contenant les figures générées
+        figures_dir: Chemin vers le dossier contenant les figures générées.
     """
-    # Nettoyage du dossier de figures s'il existe
     if os.path.exists(figures_dir):
         try:
             shutil.rmtree(figures_dir)
@@ -40,28 +72,35 @@ def main():
     st.title("Agent Web avec Streamlit")
     st.write("Entrez votre clé API OpenAI et votre requête pour interroger l'agent.")
 
-    # Initialisation de la session si nécessaire
+    # Initialisation de la session si nécessaire.
     if 'session_id' not in st.session_state:
         st.session_state.session_id = str(uuid.uuid4())
     
-    # Dossier spécifique pour les figures de cette session
+    # Dossier spécifique pour les figures de cette session.
     figures_dir = os.path.join('./figures', st.session_state.session_id)
     
-    # Saisie de la clé API (en mode mot de passe)
-    api_key = st.text_input("Clé API OpenAI", type="password")
+    # Récupération de la clé API depuis les variables d'environnement.
+    api_key_from_env = os.environ.get("OPENAI_API_KEY")
     
-    # Upload d'un fichier CSV (optionnel)
+    # Saisie de la clé API seulement si elle n'est pas déjà définie.
+    if not api_key_from_env:
+        api_key = st.text_input("Clé API OpenAI", type="password")
+    else:
+        st.success("Clé API OpenAI trouvée dans les variables d'environnement")
+        api_key = api_key_from_env
+    
+    # Upload d'un fichier CSV (optionnel).
     uploaded_file = st.file_uploader("Déposer un fichier CSV (optionnel)", type=['csv'])
     
-    # Option pour limiter l'utilisation de la mémoire
+    # Option pour limiter l'utilisation de la mémoire.
     use_memory_limit = st.checkbox("Limiter l'utilisation de la mémoire (recommandé pour les grands fichiers)", value=True)
     chunk_size = 100000 if use_memory_limit else None
     
-    # Saisie de la requête utilisateur
+    # Saisie de la requête utilisateur.
     user_query = st.text_input("Requête à envoyer à l'agent")
     
     if st.button("Exécuter"):
-        # Vérification des entrées
+        # Vérification des entrées.
         if not api_key:
             st.error("Veuillez entrer une clé API valide.")
             return
@@ -69,20 +108,20 @@ def main():
             st.error("Veuillez entrer une requête.")
             return
         
-        # Nettoyer les ressources précédentes
+        # Nettoyer les ressources précédentes.
         cleanup_resources(figures_dir)
         
-        # Définition de la clé API dans l'environnement
+        # Définition de la clé API dans l'environnement.
         os.environ["OPENAI_API_KEY"] = api_key
         
-        # Création du modèle OpenAIServerModel
+        # Création du modèle OpenAIServerModel.
         model = OpenAIServerModel(
             model_id="gpt-4o",
             api_base="https://api.openai.com/v1",
             api_key=api_key,
         )
         
-        # Création de l'agent de recherche (search_agent)
+        # Création de l'agent de recherche (search_agent).
         search_agent = ToolCallingAgent(
             tools=[DuckDuckGoSearchTool(), VisitWebpageTool()],
             model=model,
@@ -90,36 +129,57 @@ def main():
             description="Effectue des recherches sur le web en utilisant DuckDuckGo et visite des pages web."
         )
         
-        # Création de l'agent d'analyse des données (data_analyst)
+        # Création de l'agent d'analyse des données (data_analyst).
         authorized_imports = [
             "pandas", "numpy", "matplotlib", "matplotlib.pyplot", 
             "seaborn", "io", "base64", "tempfile", "os"
         ]
         data_analyst = CodeAgent(
-            tools=[CSVAnalyzerTool()],
+            tools=[],
             model=model,
             additional_authorized_imports=authorized_imports,
             name="data_analyst",
             description="Analyse les fichiers CSV et génère des visualisations à partir des données."
         )
         
-        # Liste des agents gérés
+        # Liste des agents gérés.
         managed_agents = [search_agent, data_analyst]
         
-        # Préparation des paramètres liés au fichier CSV s'il y a lieu
+        # Préparation des paramètres liés au fichier CSV s'il y a lieu.
         csv_args = None
         if uploaded_file is not None:
             try:
-                # Lire le contenu du fichier uploadé
-                file_content = uploaded_file.getvalue().decode("utf-8")
-                # Déterminer le séparateur via un heuristique simple
-                first_line = file_content.split('\n')[0]
-                separator = ',' if ',' in first_line else ';'
-                # Sauvegarder le contenu dans un fichier temporaire
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
-                csv_file_path = temp_file.name
-                temp_file.write(file_content.encode("utf-8"))
-                temp_file.close()
+                # Créer un répertoire pour stocker les fichiers CSV
+                csv_dir = os.path.join("data", "csv_files")
+                os.makedirs(csv_dir, exist_ok=True)
+                
+                # Générer un nom de fichier unique basé sur le nom original
+                original_filename = uploaded_file.name
+                base_name = os.path.splitext(original_filename)[0]
+                unique_filename = f"{base_name}_{str(uuid.uuid4())[:8]}.csv"
+                csv_file_path = os.path.join(csv_dir, unique_filename)
+                
+                # Lire et sauvegarder le contenu du fichier
+                file_content = uploaded_file.getvalue().decode("utf-8", errors="replace")
+                with open(csv_file_path, "w", encoding="utf-8") as f:
+                    f.write(file_content)
+                
+                # Utiliser CSVProcessor pour valider et analyser le fichier
+                csv_processor = CSVProcessor()
+                is_valid, validation_message = csv_processor.validate_csv(csv_file_path, auto_detect=True)
+                
+                if not is_valid:
+                    st.error(f"Le fichier CSV n'est pas valide: {validation_message}")
+                    return
+                
+                # Récupérer les informations détectées
+                separator = csv_processor.separator
+                encoding = csv_processor.encoding
+                
+                # Analyse basique pour obtenir des informations sur le fichier
+                basic_analysis = csv_processor.analyze_csv(csv_file_path, auto_detect=True)
+                columns = basic_analysis.get("colonnes", [])
+                rows = basic_analysis.get("nombre_lignes", 0)
                 
                 # Estimer la taille du fichier pour recommandations de mémoire
                 file_size_mb = len(file_content) / (1024 * 1024)
@@ -130,17 +190,25 @@ def main():
                 # Préparer les notes pour le data_analyst
                 data_analyst_notes = f"""
 # Guide d'analyse de données
+- Fichier: {original_filename}
 - Chemin: {csv_file_path}
 - Séparateur: '{separator}'
+- Encodage: {encoding}
 - Dossier pour figures: '{figures_dir}'
 - Taille du fichier: {file_size_mb:.2f} MB
+- Nombre de lignes: {rows}
+- Nombre de colonnes: {len(columns)}
 
-# Étapes recommandées :
-1. Validation du fichier CSV via csv_analyzer.
-2. Exploration des données avec df.info(), df.describe() et vérification des valeurs manquantes.
-3. Création de visualisations (histplots, boxplots, scatter plots) avec seaborn et matplotlib.
-4. Enregistrer toutes les figures dans le dossier '{figures_dir}'.
+# Colonnes détectées:
+{', '.join(columns)}
+
+# Étapes recommandées:
+1. Validation du fichier CSV via csv_analyzer (déjà effectuée: {validation_message})
+2. Exploration des données avec df.info(), df.describe() et vérification des valeurs manquantes
+3. Création de visualisations adaptées au type de données
+4. Enregistrer toutes les figures dans le dossier '{figures_dir}'
                 """
+                
                 csv_args = {
                     "source_file": csv_file_path, 
                     "separator": separator, 
@@ -149,7 +217,7 @@ def main():
                     "chunk_size": chunk_size
                 }
                 
-                info_message = f"Fichier CSV détecté avec séparateur '{separator}'. L'agent Data Analyst sera utilisé."
+                info_message = f"Fichier CSV validé avec séparateur '{separator}' et encodage '{encoding}'. L'agent Data Analyst sera utilisé."
                 if memory_warning:
                     info_message += f" {memory_warning}"
                 st.info(info_message)
@@ -160,7 +228,7 @@ def main():
         else:
             st.info("Aucun fichier CSV détecté. L'agent de recherche sera utilisé.")
         
-        # Utilisation de la fonction de routage pour déléguer la requête
+        # Utilisation de la fonction de routage pour déléguer la requête.
         with st.spinner("L'agent traite votre requête..."):
             try:
                 result = route_request(user_query, csv_args, search_agent, data_analyst)
@@ -171,21 +239,14 @@ def main():
         st.subheader("Résultat de l'agent")
         st.markdown(result, unsafe_allow_html=True)
         
-        # Afficher les figures générées dans le dossier des figures, si présentes
+        # Afficher les figures générées dans le dossier des figures, si présentes.
         if os.path.exists(figures_dir) and os.listdir(figures_dir):
             st.subheader("Figures générées")
             for fig_file in os.listdir(figures_dir):
                 if fig_file.lower().endswith(('.png', '.jpg', '.jpeg')):
                     st.image(os.path.join(figures_dir, fig_file), caption=fig_file)
         
-        # Nettoyage du fichier temporaire si uploadé
-        if uploaded_file is not None and csv_args is not None:
-            try:
-                os.unlink(csv_args["source_file"])
-            except Exception as e:
-                st.error(f"Erreur lors de la suppression du fichier temporaire: {e}")
-        
-        # Conseil complémentaire pour l'analyse de données
+        # Conseil complémentaire pour l'analyse de données.
         if csv_args is not None:
             st.info("💡 Conseil: Vous pouvez demander à l'agent d'effectuer des analyses plus spécifiques, comme des corrélations ou des statistiques détaillées sur vos données CSV.")
 
