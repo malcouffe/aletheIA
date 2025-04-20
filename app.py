@@ -7,8 +7,6 @@ from smolagents import CodeAgent, ToolCallingAgent, DuckDuckGoSearchTool, VisitW
 from utils.pipeline_indexation.csv_processor import CSVProcessor
 from utils.pipeline_indexation.pdf_processor import analyser_pdf  # Import the PDF processor
 
-# Workaround for Streamlit/Torch watcher warning
-# See: https://discuss.streamlit.io/t/error-in-torch-with-streamlit/90908/5
 torch.classes.__path__ = []
 
 def route_request(query, csv_args, search_agent, data_analyst):
@@ -114,6 +112,7 @@ def main():
         st.session_state.pdf_processed = False # Track PDF processing state
         st.session_state.processed_pdf_path = None
         st.session_state.pdf_summary = None
+        st.session_state.uploaded_file_id = None # Track the ID of the uploaded file
 
     # Dossier spécifique pour les figures de cette session.
     figures_dir = os.path.join('./figures', st.session_state.session_id)
@@ -123,6 +122,63 @@ def main():
     # Saisie de la requête utilisateur.
     user_query = st.text_input("Requête à envoyer à l'agent")
 
+    # --- Automatic PDF Processing ---
+    if uploaded_file is not None and uploaded_file.type == 'application/pdf':
+        # Check if this is a new file or the same one
+        current_file_id = f"{uploaded_file.name}-{uploaded_file.size}"
+        if st.session_state.get('uploaded_file_id') != current_file_id:
+            if not mistral_api_key:
+                st.warning("Veuillez entrer une clé API Mistral valide dans la barre latérale pour traiter le PDF.")
+            else:
+                os.environ["MISTRAL_API_KEY"] = mistral_api_key # Set Mistral key in env
+                pdf_temp_dir = os.path.join("data", "pdf_temp", st.session_state.session_id)
+                try:
+                    st.session_state.pdf_processed = False # Reset status for new file
+                    st.session_state.processed_pdf_path = None
+                    st.session_state.pdf_summary = None
+
+                    os.makedirs(pdf_temp_dir, exist_ok=True)
+                    pdf_path = os.path.join(pdf_temp_dir, uploaded_file.name)
+                    with open(pdf_path, "wb") as f:
+                        f.write(uploaded_file.getvalue())
+
+                    with st.spinner(f"Analyse du PDF '{uploaded_file.name}' en cours..."):
+                        # Define the DB path for this session
+                        session_db_path = os.path.join("data", "output", "vectordb", f"session_{st.session_state.session_id}")
+                        print(f"App context: Using DB path {session_db_path}") # Add print for debugging
+
+                        pdf_summary = analyser_pdf(pdf_path, db_path=session_db_path, exporter=False)
+                        st.session_state.pdf_processed = True
+                        st.session_state.processed_pdf_path = pdf_path
+                        st.session_state.pdf_summary = pdf_summary
+                        st.session_state.pdf_db_path = session_db_path # Store the db path for potential later use (e.g., retrieval)
+                        st.session_state.uploaded_file_id = current_file_id # Mark this file as processed
+                        st.success(f"PDF '{uploaded_file.name}' analysé et indexé avec succès.")
+                        st.json(pdf_summary) # Display summary info immediately
+                except Exception as e:
+                    st.error(f"Erreur lors du traitement du fichier PDF: {str(e)}")
+                    if os.path.exists(pdf_temp_dir):
+                        try:
+                            shutil.rmtree(pdf_temp_dir)
+                        except Exception as cleanup_error:
+                            st.warning(f"Échec du nettoyage du dossier PDF temporaire : {cleanup_error}")
+                    # Reset state on error
+                    st.session_state.pdf_processed = False
+                    st.session_state.processed_pdf_path = None
+                    st.session_state.pdf_summary = None
+                    st.session_state.pdf_db_path = None # Clear db path
+                    st.session_state.uploaded_file_id = None
+
+    elif uploaded_file is None and st.session_state.get('uploaded_file_id') is not None:
+        # Clear PDF state if file is removed
+        st.session_state.pdf_processed = False
+        st.session_state.processed_pdf_path = None
+        st.session_state.pdf_summary = None
+        st.session_state.pdf_db_path = None # Clear db path
+        st.session_state.uploaded_file_id = None
+        # Consider cleaning up temp PDF folder here if desired
+
+    # --- Main Execution Button ---
     if st.button("Exécuter"):
         # Vérification des entrées.
         if not api_key:
@@ -133,10 +189,12 @@ def main():
             if not mistral_api_key:
                  st.error("Veuillez entrer une clé API Mistral valide pour le traitement PDF.")
                  return
-            os.environ["MISTRAL_API_KEY"] = mistral_api_key # Set Mistral key in env
+            # Mistral key already set during upload or checked here if upload happened before key entry
+            if "MISTRAL_API_KEY" not in os.environ and mistral_api_key:
+                 os.environ["MISTRAL_API_KEY"] = mistral_api_key
 
-        if not user_query and not (uploaded_file and uploaded_file.type == 'application/pdf'): # Allow execution just for PDF processing
-             st.error("Veuillez entrer une requête.")
+        if not user_query and not csv_args: # Allow execution if CSV is present, even without query
+             st.error("Veuillez entrer une requête ou fournir un fichier CSV.")
              return
 
         # Nettoyer les ressources précédentes (figures).
@@ -178,49 +236,12 @@ def main():
 
         # Préparation des paramètres liés aux fichiers.
         csv_args = None
-        pdf_processed_this_run = False # Track if PDF was processed in this specific run
 
         if uploaded_file is not None:
             file_type = uploaded_file.type
             
-            # --- Traitement PDF ---
-            if file_type == 'application/pdf':
-                 if not mistral_api_key: # Double check Mistral key
-                     st.error("Clé API Mistral requise pour traiter le PDF.")
-                     return
-
-                 try:
-                    # Créer un répertoire temporaire pour le PDF
-                    pdf_temp_dir = os.path.join("data", "pdf_temp", st.session_state.session_id)
-                    os.makedirs(pdf_temp_dir, exist_ok=True)
-
-                    # Sauvegarder le PDF uploadé
-                    pdf_path = os.path.join(pdf_temp_dir, uploaded_file.name)
-                    with open(pdf_path, "wb") as f:
-                        f.write(uploaded_file.getvalue())
-
-                    # Appeler la fonction d'analyse PDF
-                    with st.spinner("Analyse du PDF en cours (cela peut prendre du temps)..."):
-                        pdf_summary = analyser_pdf(pdf_path)
-                        st.session_state.pdf_processed = True
-                        st.session_state.processed_pdf_path = pdf_path # Store path for context
-                        st.session_state.pdf_summary = pdf_summary # Store summary
-                        pdf_processed_this_run = True # Mark PDF as processed in this run
-                        st.success(f"PDF '{uploaded_file.name}' analysé et indexé avec succès.")
-                        st.json(pdf_summary) # Display summary info
-
-                    # Nettoyer le fichier PDF temporaire après analyse (garder le dossier pour output)
-                    # os.remove(pdf_path) # Keep the original for now if needed later
-
-                 except Exception as e:
-                    st.error(f"Erreur lors du traitement du fichier PDF: {str(e)}")
-                    # Nettoyer le dossier temporaire en cas d'erreur
-                    if os.path.exists(pdf_temp_dir):
-                        shutil.rmtree(pdf_temp_dir)
-                    return # Stop execution on PDF processing error
-
-            # --- Traitement CSV ---
-            elif file_type == 'text/csv':
+            # --- Traitement CSV (remains inside button logic) ---
+            if file_type == 'text/csv':
                 try:
                     # Créer un répertoire pour stocker les fichiers CSV
                     csv_dir = os.path.join("data", "csv_files")
@@ -320,8 +341,11 @@ def main():
             # Check if a PDF was processed in a previous run
             pdf_context_message = ""
             if st.session_state.get('pdf_processed') and st.session_state.get('processed_pdf_path'):
-                 pdf_context_message = f"\n\nContext: Un fichier PDF a été préalablement analysé ({os.path.basename(st.session_state.processed_pdf_path)}). Utilisez les informations de ce PDF si pertinent pour la requête."
-                 # TODO: Implement actual RAG query mechanism here instead of just adding context message
+                pdf_context_message = f"\n\nContexte PDF: Un fichier PDF nommé '{os.path.basename(st.session_state.processed_pdf_path)}' a été analysé et indexé. Vous pouvez utiliser ces informations pour répondre à la requête si cela est pertinent."
+                # Display summary again for context if needed
+                if st.session_state.get('pdf_summary'):
+                    with st.expander("Résumé du PDF traité"):
+                        st.json(st.session_state.pdf_summary)
 
             # Add PDF context to the query if applicable
             full_query = user_query + pdf_context_message
@@ -351,8 +375,12 @@ def main():
         elif pdf_processed_this_run:
              st.info("Le fichier PDF a été traité et indexé. Vous pouvez maintenant poser des questions à son sujet.")
         else:
-             # This case should not happen if validation is correct, but as a fallback:
-             st.warning("Aucune action effectuée. Veuillez fournir une requête ou un fichier supporté.")
+            # Display message if only PDF was processed and no query given yet
+            if st.session_state.get('pdf_processed') and not user_query and not csv_args:
+                st.info("Le fichier PDF a été traité. Entrez une requête pour interroger son contenu ou le web.")
+            elif not st.session_state.get('pdf_processed') and not user_query and not csv_args:
+                # This case should not happen if validation is correct, but as a fallback:
+                st.warning("Aucune action effectuée. Veuillez fournir une requête ou un fichier supporté.")
 
 
 if __name__ == "__main__":

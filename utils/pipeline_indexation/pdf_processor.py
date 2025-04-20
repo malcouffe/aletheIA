@@ -38,14 +38,24 @@ CHUNK_OVERLAP = 200
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
-# On définira DB_PATH en fonction du thème choisi par l'utilisateur
-DB_PATH = None
+# DB_PATH will now be passed as an argument
 
 
 # -------- FONCTION PRINCIPALE --------
 
-def analyser_pdf(chemin_pdf, exporter=True):
+def analyser_pdf(chemin_pdf, db_path: str, exporter=True):
+    """Analyse un PDF, extrait les éléments et les stocke dans une base vectorielle.
+
+    Args:
+        chemin_pdf (str): Chemin vers le fichier PDF.
+        db_path (str): Chemin vers le dossier de la base de données vectorielle ChromaDB.
+        exporter (bool): Si True, exporte les éléments extraits localement.
+
+    Returns:
+        dict: Résumé de l'analyse.
+    """
     print(f"Analyse du PDF: {chemin_pdf}")
+    print(f"Utilisation de la base de données: {db_path}")
     client = Mistral(api_key=MISTRAL_API_KEY)
 
     # 1. Traitement OCR
@@ -68,6 +78,7 @@ def analyser_pdf(chemin_pdf, exporter=True):
 
     # 5. Stockage vectoriel
     stock_ids = stocker_dans_base_vectorielle(
+        db_path,
         chemin_pdf,
         chunks, emb_text,
         images, emb_imgs,
@@ -326,9 +337,11 @@ def generer_embeddings_images(modele, elements, est_tableau=False):
 
 # -------- STOCKAGE VECTORIEL --------
 
-def stocker_dans_base_vectorielle(chemin_pdf, chunks, emb_textes, images, emb_images, tableaux, emb_tableaux, metadonnees):
+def stocker_dans_base_vectorielle(db_path: str, chemin_pdf, chunks, emb_textes, images, emb_images, tableaux, emb_tableaux, metadonnees):
     print("Stockage dans la base vectorielle...")
-    client = chromadb.PersistentClient(path=DB_PATH)
+    # Ensure the directory exists before creating the client
+    os.makedirs(db_path, exist_ok=True)
+    client = chromadb.PersistentClient(path=db_path)
     collection_name = "pdf_collection"
     try:
         collection = client.get_collection(collection_name)
@@ -508,19 +521,12 @@ if __name__ == "__main__":
         print(f"ERREUR: Le fichier '{pdf_path}' n'existe pas.")
         sys.exit(1)
 
-    # Demande du thème du document
-    theme = ""
-    while theme not in ["LCB-FT", "Tokenisation"]:
-        theme = input("De quel thème ce document traite-t-il ? (LCB-FT ou Tokenisation): ").strip()
-        if theme not in ["LCB-FT", "Tokenisation"]:
-            print("Veuillez choisir entre 'LCB-FT' et 'Tokenisation'.")
+    # Instead of asking for theme, let's use a fixed path for direct script execution
+    # Or you could keep the theme logic if needed for standalone runs
+    script_db_path = os.path.join("data", "output", "vectordb", "standalone_run")
+    print(f"Base de données pour exécution directe: {script_db_path}")
 
-    # Définir la base de vecteurs selon le thème (2 bases distinctes)
-    DB_PATH = os.path.join("data", "output", "vectordb", theme)
-    os.makedirs(DB_PATH, exist_ok=True)
-    print(f"Base de données utilisée: {DB_PATH}")
-
-    resultat = analyser_pdf(pdf_path, exporter=True)
+    resultat = analyser_pdf(pdf_path, db_path=script_db_path, exporter=True)
 
     print("\n" + "=" * 50)
     print("RÉSUMÉ DE L'INDEXATION:")
@@ -529,7 +535,7 @@ if __name__ == "__main__":
     print(f"- Images: {resultat['images']}")
     print(f"- Tableaux: {resultat['tableaux']}")
     print(f"- Total éléments stockés: {len(resultat['ids_stockes'])}")
-    print(f"- Base de données: {DB_PATH}")
+    print(f"- Base de données: {script_db_path}")
 
     if "dossier_export" in resultat:
         print(f"\nÉléments exportés dans: {resultat['dossier_export']}")
