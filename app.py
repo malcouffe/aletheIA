@@ -2,64 +2,23 @@ import streamlit as st
 import os
 import shutil
 import uuid
-import torch # Ensure torch is imported
-from smolagents import CodeAgent, ToolCallingAgent, DuckDuckGoSearchTool, VisitWebpageTool, OpenAIServerModel
-from utils.pipeline_indexation.csv_processor import CSVProcessor
-from utils.pipeline_indexation.pdf_processor import analyser_pdf  # Import the PDF processor
+import torch
+from smolagents import OpenAIServerModel
+from ui_components import handle_pdf_upload, handle_csv_upload, cleanup_resources
+from agent_utils import (
+    initialize_search_agent, 
+    initialize_data_analyst_agent, 
+    initialize_rag_agent, 
+    route_request
+)
+
+# -------- CONFIGURATION --------
+# Keep constants needed by app.py or potentially passed to utils
+# EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2" # Moved to agent_utils
+# PDF_CLASSES = ['Select Classification...', 'finance policies', 'legal AML', 'general'] # Moved to ui_components
+# -------------------------------
 
 torch.classes.__path__ = []
-
-def route_request(query, csv_args, search_agent, data_analyst):
-    """
-    Fonction de routage qui délègue la requête à l'agent spécialisé.
-    Si csv_args est fourni (indiquant la présence d'un fichier CSV), la requête est déléguée à data_analyst.
-    Sinon, la requête est envoyée à search_agent.
-    """
-    if csv_args is not None:
-        # Définir le prompt selon la présence ou non des additional_notes
-        additional_notes = csv_args.get('additional_notes', '').strip()
-        
-        # Message de base indiquant l'expertise en data-analysis
-        expertise_message = (
-            "Vous êtes un expert en data-analysis. "
-            "Votre tâche est d'analyser le fichier CSV fourni afin de répondre à la question posée. "
-        )
-        
-        # Construire le prompt en incluant les notes additionnelles
-        prompt = (
-            f"{expertise_message}\n"
-            f"Analyse du fichier CSV: {query}\n\n"
-            f"Notes additionnelles et contexte: {additional_notes}"
-        )
-
-        # Préparer les arguments pour l'outil csv_analyzer.
-        csv_analyzer_args = {
-            "source_file": csv_args["source_file"],
-            "separator": csv_args["separator"],
-            "figures_dir": csv_args["figures_dir"],
-            "chunk_size": csv_args["chunk_size"]
-        }
-        
-        return data_analyst.run(prompt, additional_args={"csv_analyzer": csv_analyzer_args})
-    else:
-        # Délégation à l'agent de recherche pour traiter la requête générale.
-        return search_agent.run(query)
-
-def cleanup_resources(figures_dir):
-    """
-    Nettoie les ressources utilisées par les agents.
-    
-    Args:
-        figures_dir: Chemin vers le dossier contenant les figures générées.
-    """
-    if os.path.exists(figures_dir):
-        try:
-            shutil.rmtree(figures_dir)
-            os.makedirs(figures_dir, exist_ok=True)
-        except Exception as e:
-            st.warning(f"Impossible de nettoyer le dossier des figures: {e}")
-    else:
-        os.makedirs(figures_dir, exist_ok=True)
 
 def main():
     st.title("Agent Web avec Streamlit")
@@ -69,319 +28,185 @@ def main():
     with st.sidebar:
         st.header("Configuration")
 
-        # Récupération de la clé API depuis les variables d'environnement.
         api_key_from_env = os.environ.get("OPENAI_API_KEY")
-        mistral_api_key_from_env = os.environ.get("MISTRAL_API_KEY") # Get Mistral key
+        mistral_api_key_from_env = os.environ.get("MISTRAL_API_KEY")
 
-        # Saisie de la clé API OpenAI seulement si elle n'est pas déjà définie.
         if not api_key_from_env:
             api_key = st.text_input("Clé API OpenAI", type="password")
         else:
             st.success("Clé API OpenAI trouvée")
             api_key = api_key_from_env
             
-        # Saisie de la clé API Mistral si nécessaire pour le PDF
         if not mistral_api_key_from_env:
              mistral_api_key = st.text_input("Clé API Mistral (pour PDF)", type="password")
         else:
             st.success("Clé API Mistral trouvée")
             mistral_api_key = mistral_api_key_from_env
 
-        st.subheader("Chargement de Fichier")
-        # Upload d'un fichier CSV ou PDF (optionnel).
-        uploaded_file = st.file_uploader("Déposer un fichier (CSV ou PDF)", type=['csv', 'pdf'])
+        st.subheader("Options Fichiers")
+        # Separate uploaders for clarity
+        file_type_choice = st.radio("Quel type de fichier charger ?", ("Aucun", "PDF", "CSV"), horizontal=True)
 
-        # Options spécifiques au fichier (affichées si un fichier est chargé)
-        user_notes = ""
-        use_memory_limit = True # Default value for CSV
-        if uploaded_file:
-            file_type = uploaded_file.type
-            if file_type == 'text/csv':
-                # Option pour limiter l'utilisation de la mémoire (CSV).
-                use_memory_limit = st.checkbox("Limiter l'utilisation de la mémoire (CSV)", value=True)
-            # Permettre à l'utilisateur d'ajouter ses propres notes sur le fichier
-            user_notes = st.text_area("Notes additionnelles sur le fichier",
-                                      placeholder="Ajoutez ici vos observations, questions spécifiques ou contexte sur le fichier...",
-                                      height=150)
+        # Common options
+        user_notes = st.text_area("Notes additionnelles sur le fichier", 
+                                  placeholder="Ajoutez ici vos observations, questions spécifiques ou contexte sur le fichier...", 
+                                  height=150)
+        # CSV specific option
+        use_memory_limit = True # Default
+        if file_type_choice == "CSV":
+            use_memory_limit = st.checkbox("Limiter l'utilisation de la mémoire (CSV)", value=True)
+        
     # -------------------------------------
 
     # --- Interface Principale ---
-    # Initialisation de la session si nécessaire.
     if 'session_id' not in st.session_state:
         st.session_state.session_id = str(uuid.uuid4())
-        st.session_state.pdf_processed = False # Track PDF processing state
-        st.session_state.processed_pdf_path = None
-        st.session_state.pdf_summary = None
-        st.session_state.uploaded_file_id = None # Track the ID of the uploaded file
+        # Initialize PDF state keys if they don't exist
+        st.session_state.setdefault('uploaded_file_id', None)
+        st.session_state.setdefault('pdf_summary', None)
+        st.session_state.setdefault('pdf_suggested_classification', None)
+        st.session_state.setdefault('pdf_classification', None)
+        st.session_state.setdefault('pdf_indexed', False)
+        st.session_state.setdefault('pdf_temp_path', None)
+        st.session_state.setdefault('pdf_db_path', None)
+        
+    figures_dir = os.path.join('data', 'figures', st.session_state.session_id)
 
-    # Dossier spécifique pour les figures de cette session.
-    figures_dir = os.path.join('./figures', st.session_state.session_id)
+    model = None
+    if api_key:
+        try:
+            model = OpenAIServerModel(
+                model_id="gpt-4o",
+                api_base="https://api.openai.com/v1",
+                api_key=api_key,
+            )
+        except Exception as e:
+            st.warning(f"Impossible d'initialiser le modèle OpenAI : {e}")
+    
+    chunk_size = 100000 if use_memory_limit else None
 
-    chunk_size = 100000 if use_memory_limit else None # Défini après la checkbox
+    # --- File Upload Handling (using functions from ui_components) ---
+    csv_args = None
+    if file_type_choice == "PDF":
+        # Pass the initialized model, API key, and notes
+        handle_pdf_upload(model, mistral_api_key, user_notes)
+    elif file_type_choice == "CSV":
+        # Pass relevant options
+        csv_args = handle_csv_upload(user_notes, use_memory_limit, figures_dir, chunk_size)
+    elif file_type_choice == "Aucun":
+        # Clear potentially lingering PDF state if user switches from PDF to Aucun
+        # This logic might need refinement depending on desired behavior when switching file types
+        if st.session_state.get('uploaded_file_id') is not None: 
+             st.session_state.uploaded_file_id = None
+             st.session_state.pdf_summary = None
+             st.session_state.pdf_suggested_classification = None
+             st.session_state.pdf_classification = None
+             st.session_state.pdf_indexed = False
+             st.session_state.pdf_temp_path = None
+             st.session_state.pdf_db_path = None
+             pdf_temp_dir = os.path.join("data", "pdf_temp", st.session_state.session_id)
+             if os.path.exists(pdf_temp_dir):
+                 try:
+                     shutil.rmtree(pdf_temp_dir)
+                 except Exception as e:
+                     st.warning(f"Could not remove temp PDF dir: {e}")
 
-    # Saisie de la requête utilisateur.
+    # --- User Query Input ---
     user_query = st.text_input("Requête à envoyer à l'agent")
-
-    # --- Automatic PDF Processing ---
-    if uploaded_file is not None and uploaded_file.type == 'application/pdf':
-        # Check if this is a new file or the same one
-        current_file_id = f"{uploaded_file.name}-{uploaded_file.size}"
-        if st.session_state.get('uploaded_file_id') != current_file_id:
-            if not mistral_api_key:
-                st.warning("Veuillez entrer une clé API Mistral valide dans la barre latérale pour traiter le PDF.")
-            else:
-                os.environ["MISTRAL_API_KEY"] = mistral_api_key # Set Mistral key in env
-                pdf_temp_dir = os.path.join("data", "pdf_temp", st.session_state.session_id)
-                try:
-                    st.session_state.pdf_processed = False # Reset status for new file
-                    st.session_state.processed_pdf_path = None
-                    st.session_state.pdf_summary = None
-
-                    os.makedirs(pdf_temp_dir, exist_ok=True)
-                    pdf_path = os.path.join(pdf_temp_dir, uploaded_file.name)
-                    with open(pdf_path, "wb") as f:
-                        f.write(uploaded_file.getvalue())
-
-                    with st.spinner(f"Analyse du PDF '{uploaded_file.name}' en cours..."):
-                        # Define the DB path for this session
-                        session_db_path = os.path.join("data", "output", "vectordb", f"session_{st.session_state.session_id}")
-                        print(f"App context: Using DB path {session_db_path}") # Add print for debugging
-
-                        pdf_summary = analyser_pdf(pdf_path, db_path=session_db_path, exporter=False)
-                        st.session_state.pdf_processed = True
-                        st.session_state.processed_pdf_path = pdf_path
-                        st.session_state.pdf_summary = pdf_summary
-                        st.session_state.pdf_db_path = session_db_path # Store the db path for potential later use (e.g., retrieval)
-                        st.session_state.uploaded_file_id = current_file_id # Mark this file as processed
-                        st.success(f"PDF '{uploaded_file.name}' analysé et indexé avec succès.")
-                        st.json(pdf_summary) # Display summary info immediately
-                except Exception as e:
-                    st.error(f"Erreur lors du traitement du fichier PDF: {str(e)}")
-                    if os.path.exists(pdf_temp_dir):
-                        try:
-                            shutil.rmtree(pdf_temp_dir)
-                        except Exception as cleanup_error:
-                            st.warning(f"Échec du nettoyage du dossier PDF temporaire : {cleanup_error}")
-                    # Reset state on error
-                    st.session_state.pdf_processed = False
-                    st.session_state.processed_pdf_path = None
-                    st.session_state.pdf_summary = None
-                    st.session_state.pdf_db_path = None # Clear db path
-                    st.session_state.uploaded_file_id = None
-
-    elif uploaded_file is None and st.session_state.get('uploaded_file_id') is not None:
-        # Clear PDF state if file is removed
-        st.session_state.pdf_processed = False
-        st.session_state.processed_pdf_path = None
-        st.session_state.pdf_summary = None
-        st.session_state.pdf_db_path = None # Clear db path
-        st.session_state.uploaded_file_id = None
-        # Consider cleaning up temp PDF folder here if desired
 
     # --- Main Execution Button ---
     if st.button("Exécuter"):
-        # Vérification des entrées.
+        # Validation checks
         if not api_key:
             st.error("Veuillez entrer une clé API OpenAI valide.")
             return
-        # Check Mistral key only if a PDF is uploaded or was processed previously
-        if (uploaded_file and uploaded_file.type == 'application/pdf') or st.session_state.get('processed_pdf_path'):
-            if not mistral_api_key:
-                 st.error("Veuillez entrer une clé API Mistral valide pour le traitement PDF.")
-                 return
-            # Mistral key already set during upload or checked here if upload happened before key entry
-            if "MISTRAL_API_KEY" not in os.environ and mistral_api_key:
-                 os.environ["MISTRAL_API_KEY"] = mistral_api_key
-
-        if not user_query and not csv_args: # Allow execution if CSV is present, even without query
-             st.error("Veuillez entrer une requête ou fournir un fichier CSV.")
+            
+        # Check Mistral key only if PDF interaction is possible (classification selected)
+        if st.session_state.get('pdf_classification') and not st.session_state.get('pdf_indexed'):
+             # It's selected but not indexed yet (user hasn't clicked index button?)
+             # Or if the RAG agent might be needed based on state
+             if not mistral_api_key:
+                  st.error("Clé API Mistral requise pour l'indexation ou l'interrogation PDF.")
+                  return
+                  
+        # Allow execution if query OR csv OR indexed PDF exists
+        if not user_query and not csv_args and not st.session_state.get('pdf_indexed'):
+             st.error("Veuillez entrer une requête ou fournir et indexer un fichier PDF ou fournir un CSV.")
              return
 
-        # Nettoyer les ressources précédentes (figures).
-        cleanup_resources(figures_dir)
+        # Ensure model is initialized
+        if not model:
+            st.error("Modèle OpenAI non initialisé. Vérifiez la clé API.")
+            return
 
-        # Définition de la clé API OpenAI dans l'environnement.
+        # Set keys in environment (may be redundant if set elsewhere, but safe)
         os.environ["OPENAI_API_KEY"] = api_key
-
-        # Création du modèle OpenAIServerModel.
-        model = OpenAIServerModel(
-            model_id="gpt-4o",
-            api_base="https://api.openai.com/v1",
-            api_key=api_key,
-        )
-
-        # Création de l'agent de recherche (search_agent).
-        search_agent = ToolCallingAgent(
-            tools=[DuckDuckGoSearchTool(), VisitWebpageTool()],
-            model=model,
-            name="search_agent",
-            description="Effectue des recherches sur le web en utilisant DuckDuckGo et visite des pages web."
-        )
-
-        # Création de l'agent d'analyse des données (data_analyst).
-        authorized_imports = [
-            "pandas", "numpy", "matplotlib", "matplotlib.pyplot",
-            "seaborn", "io", "base64", "tempfile", "os"
-        ]
-        data_analyst = CodeAgent(
-            tools=[],
-            model=model,
-            additional_authorized_imports=authorized_imports,
-            name="data_analyst",
-            description="Analyse les fichiers CSV et génère des visualisations à partir des données."
-        )
-
-        # Liste des agents gérés.
-        managed_agents = [search_agent, data_analyst]
-
-        # Préparation des paramètres liés aux fichiers.
-        csv_args = None
-
-        if uploaded_file is not None:
-            file_type = uploaded_file.type
+        if mistral_api_key:
+            os.environ["MISTRAL_API_KEY"] = mistral_api_key
             
-            # --- Traitement CSV (remains inside button logic) ---
-            if file_type == 'text/csv':
-                try:
-                    # Créer un répertoire pour stocker les fichiers CSV
-                    csv_dir = os.path.join("data", "csv_files")
-                    os.makedirs(csv_dir, exist_ok=True)
+        # Cleanup old figures before execution
+        cleanup_resources(figures_dir) 
 
-                    # Générer un nom de fichier unique basé sur le nom original
-                    original_filename = uploaded_file.name
-                    base_name = os.path.splitext(original_filename)[0]
-                    unique_filename = f"{base_name}_{str(uuid.uuid4())[:8]}.csv"
-                    csv_file_path = os.path.join(csv_dir, unique_filename)
+        # --- Agent Initialization (using functions from agent_utils) ---
+        search_agent = None
+        data_analyst = None
+        rag_agent = None
 
-                    # Lire et sauvegarder le contenu du fichier
-                    # Try common encodings if utf-8 fails
-                    try:
-                        file_content = uploaded_file.getvalue().decode("utf-8")
-                    except UnicodeDecodeError:
-                        try:
-                            file_content = uploaded_file.getvalue().decode("latin-1")
-                        except UnicodeDecodeError:
-                             file_content = uploaded_file.getvalue().decode("iso-8859-1", errors="replace")
-
-                    with open(csv_file_path, "w", encoding="utf-8") as f: # Save as utf-8
-                        f.write(file_content)
-
-                    # Utiliser CSVProcessor pour valider et analyser le fichier
-                    csv_processor = CSVProcessor()
-                    is_valid, validation_message = csv_processor.validate_csv(csv_file_path, auto_detect=True)
-
-                    if not is_valid:
-                        st.error(f"Le fichier CSV n'est pas valide: {validation_message}")
-                        return
-
-                    # Récupérer les informations détectées
-                    separator = csv_processor.separator
-                    encoding = csv_processor.encoding # Keep detected encoding info
-
-                    # Analyse basique pour obtenir des informations sur le fichier
-                    basic_analysis = csv_processor.analyze_csv(csv_file_path, auto_detect=True)
-                    columns = basic_analysis.get("colonnes", [])
-                    rows = basic_analysis.get("nombre_lignes", 0)
-
-                    # Estimer la taille du fichier pour recommandations de mémoire
-                    file_size_mb = os.path.getsize(csv_file_path) / (1024 * 1024)
-                    memory_warning = ""
-                    if file_size_mb > 10 and not use_memory_limit:
-                        memory_warning = "⚠️ Le fichier est relativement volumineux. L'option de limitation de mémoire est recommandée."
-
-                    # Préparer les notes pour le data_analyst
-                    data_analyst_notes = f"""
-# Guide d'analyse de données
-- Fichier: {original_filename} (Encodage détecté: {encoding})
-- Chemin: {csv_file_path}
-- Séparateur: '{separator}'
-- Dossier pour figures: '{figures_dir}'
-- Taille du fichier: {file_size_mb:.2f} MB
-- Nombre de lignes: {rows}
-- Nombre de colonnes: {len(columns)}
-
-# Colonnes détectées:
-{', '.join(columns)}
-
-# Notes de l'utilisateur:
-{user_notes if user_notes else "Aucune note spécifique fournie par l'utilisateur."}
-
-# Étapes recommandées:
-1. Charger le CSV avec le bon séparateur: pd.read_csv('{csv_file_path}', sep='{separator}')
-2. Validation du fichier CSV via csv_analyzer (déjà effectuée: {validation_message})
-3. Exploration des données avec df.info(), df.describe() et vérification des valeurs manquantes
-4. Création de visualisations adaptées au type de données
-5. Enregistrer toutes les figures dans le dossier '{figures_dir}'
-                    """
-
-                    csv_args = {
-                        "source_file": csv_file_path,
-                        "separator": separator,
-                        "additional_notes": data_analyst_notes,
-                        "figures_dir": figures_dir,
-                        "chunk_size": chunk_size
-                    }
-
-                    info_message = f"Fichier CSV '{original_filename}' validé avec séparateur '{separator}'. L'agent Data Analyst sera utilisé."
-                    if memory_warning:
-                        info_message += f" {memory_warning}"
-                    st.info(info_message)
-
-                except Exception as e:
-                    st.error(f"Erreur lors du traitement du fichier CSV: {str(e)}")
-                    return
-            else:
-                 st.warning(f"Type de fichier non supporté: {file_type}")
-                 return # Stop if unsupported file type uploaded
-
-        # --- Exécution de la requête ---
-        # Only run route_request if there's a query OR if a CSV was just uploaded
-        # If only a PDF was uploaded, we skip routing for now.
+        with st.spinner("Initialisation des agents..."):
+            search_agent = initialize_search_agent(model)
+            data_analyst = initialize_data_analyst_agent(model)
+            
+            # Initialize RAG agent ONLY if PDF was indexed successfully
+            if st.session_state.get('pdf_indexed') and st.session_state.get('pdf_db_path'):
+                rag_agent = initialize_rag_agent(model, st.session_state.pdf_db_path)
+                if rag_agent:
+                    st.success("RAG Agent initialisé.") # Moved success message here
+            
+        # --- Execute Query ---
+        # Proceed only if at least one agent relevant to the query is initialized
         if user_query or csv_args:
-            # Check if a PDF was processed in a previous run
-            pdf_context_message = ""
-            if st.session_state.get('pdf_processed') and st.session_state.get('processed_pdf_path'):
-                pdf_context_message = f"\n\nContexte PDF: Un fichier PDF nommé '{os.path.basename(st.session_state.processed_pdf_path)}' a été analysé et indexé. Vous pouvez utiliser ces informations pour répondre à la requête si cela est pertinent."
-                # Display summary again for context if needed
-                if st.session_state.get('pdf_summary'):
-                    with st.expander("Résumé du PDF traité"):
-                        st.json(st.session_state.pdf_summary)
+            pdf_context = None
+            if st.session_state.get('pdf_indexed'):
+                pdf_context = { 
+                    "summary": st.session_state.get('pdf_summary'),
+                    "classification": st.session_state.get('pdf_classification'),
+                    "db_path": st.session_state.get('pdf_db_path')
+                }
+                # Optional: Display summary again if querying indexed PDF
+                # with st.expander("Résumé du PDF traité"):
+                #     st.markdown(st.session_state.get('pdf_summary', "Aucun résumé disponible."))
 
-            # Add PDF context to the query if applicable
-            full_query = user_query + pdf_context_message
-
-            # Utilisation de la fonction de routage pour déléguer la requête.
             with st.spinner("L'agent traite votre requête..."):
                 try:
-                    # Pass the modified query with PDF context
-                    result = route_request(full_query, csv_args, search_agent, data_analyst) 
+                    result = route_request(
+                        query=user_query, 
+                        csv_args=csv_args, 
+                        search_agent=search_agent, 
+                        data_analyst=data_analyst, 
+                        rag_agent=rag_agent, 
+                        pdf_context=pdf_context
+                    ) 
+                    st.subheader("Résultat de l'agent")
+                    st.markdown(result, unsafe_allow_html=True)
+
                 except Exception as e:
                     st.error(f"Erreur lors du traitement de la requête: {str(e)}")
-                    return # Stop execution on routing/agent error
+                    # return # Optional: Stop execution on error
 
-            st.subheader("Résultat de l'agent")
-            st.markdown(result, unsafe_allow_html=True)
-
-            # Afficher les figures générées dans le dossier des figures, si présentes (CSV analysis).
+            # Display figures generated by Data Analyst
             if csv_args and os.path.exists(figures_dir) and os.listdir(figures_dir):
                 st.subheader("Figures générées (Analyse CSV)")
                 for fig_file in os.listdir(figures_dir):
                     if fig_file.lower().endswith(('.png', '.jpg', '.jpeg')):
                         st.image(os.path.join(figures_dir, fig_file), caption=fig_file)
-
-            # Conseil complémentaire pour l'analyse de données CSV.
-            if csv_args is not None:
-                st.info("💡 Conseil: Vous pouvez demander à l'agent d'effectuer des analyses plus spécifiques, comme des corrélations ou des statistiques détaillées sur vos données CSV.")
-        elif pdf_processed_this_run:
-             st.info("Le fichier PDF a été traité et indexé. Vous pouvez maintenant poser des questions à son sujet.")
-        else:
-            # Display message if only PDF was processed and no query given yet
-            if st.session_state.get('pdf_processed') and not user_query and not csv_args:
-                st.info("Le fichier PDF a été traité. Entrez une requête pour interroger son contenu ou le web.")
-            elif not st.session_state.get('pdf_processed') and not user_query and not csv_args:
-                # This case should not happen if validation is correct, but as a fallback:
-                st.warning("Aucune action effectuée. Veuillez fournir une requête ou un fichier supporté.")
-
+                st.info("💡 Conseil: Vous pouvez demander à l'agent d'effectuer des analyses plus spécifiques sur vos données CSV.")
+        
+        elif not user_query and st.session_state.get('pdf_indexed'):
+             st.info("Le fichier PDF a été indexé. Entrez une requête pour interroger son contenu.")
+        
+        # Fallback/info messages
+        # else:
+        #    st.warning("Aucune action effectuée. Veuillez fournir une requête.")
 
 if __name__ == "__main__":
     main()
