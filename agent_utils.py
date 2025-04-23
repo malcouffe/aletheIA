@@ -9,7 +9,7 @@ from smolagents import (
 )
 from langchain_community.vectorstores import Chroma
 from langchain_core.vectorstores import VectorStore
-from sentence_transformers import SentenceTransformer
+from langchain_community.embeddings import HuggingFaceEmbeddings 
 from managed_agent.retriever_tool import RetrieverTool
 
 # Define embedding model name centrally
@@ -42,18 +42,24 @@ def initialize_rag_agent(model: OpenAIServerModel, db_path: str) -> CodeAgent | 
     """Initializes the RAG agent if the vector database exists."""
     try:
         print(f"RAG Agent: Attempting to load vector store from: {db_path}")
-        # Ensure the directory exists before trying to load
         if not os.path.exists(db_path):
              raise FileNotFoundError(f"Vector DB path not found: {db_path}")
 
-        # 1. Initialize the embedding model
-        embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+        # 1. Initialize the embedding model using the LangChain wrapper
+        # Use cache_folder to potentially speed up loading on subsequent runs
+        model_kwargs = {'device': 'cpu'} # Or 'cuda' if GPU available and configured
+        encode_kwargs = {'normalize_embeddings': False}
+        embedding_function = HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL_NAME,
+            model_kwargs=model_kwargs,
+            encode_kwargs=encode_kwargs,
+            # cache_folder=os.path.join(os.getcwd(), ".cache") # Optional: Specify a cache folder
+        )
 
-        # 2. Initialize the Chroma vector store
+        # 2. Initialize the Chroma vector store with the wrapped embedding function
         vector_store = Chroma(
             persist_directory=db_path,
-            embedding_function=embedding_model
-            # collection_name="pdf_collection" # Assuming default
+            embedding_function=embedding_function
         )
 
         # 3. Initialize the RetrieverTool
@@ -76,55 +82,15 @@ def initialize_rag_agent(model: OpenAIServerModel, db_path: str) -> CodeAgent | 
         print(f"RAG Agent initialization failed: {rag_init_error}")
         return None
 
-def route_request(query: str, csv_args: dict | None, search_agent: ToolCallingAgent, data_analyst: CodeAgent, rag_agent: CodeAgent | None = None, pdf_context: dict | None = None):
-    """
-    Fonction de routage qui délègue la requête à l'agent spécialisé.
-    Priorité : RAG si applicable > Data Analysis (CSV) > Recherche Web.
-    """
-    # --- RAG Agent Check ---
-    # Prioritize RAG if it's initialized and the query is likely related to the PDF
-    # (Simple check: RAG exists and query is not empty. Could be refined.)
-    if rag_agent and query:
-        print(f"Routing to RAG agent.")
-        rag_query = query
-        # Construct context string if pdf_context is provided (optional)
-        if pdf_context and pdf_context.get('summary'):
-             context_info = f"Context from PDF ({pdf_context.get('classification', 'N/A')}) Summary: {pdf_context.get('summary', '')[:200]}..."
-             rag_query += f"\n\n{context_info}"
-             print(f"  with context: {context_info}")
-        # Pass the query (potentially with context) to the RAG agent
-        # The RetrieverTool within the RAG agent handles the actual retrieval
-        return rag_agent.run(rag_query)
-
-    # --- Data Analyst Check ---
-    elif csv_args is not None:
-        print("Routing to Data Analyst agent.")
-        additional_notes = csv_args.get('additional_notes', '').strip()
-
-        expertise_message = (
-            "Vous êtes un expert en data-analysis. "
-            "Votre tâche est d'analyser le fichier CSV fourni afin de répondre à la question posée. "
+def initialize_manager_agent(model: OpenAIServerModel) -> CodeAgent:
+    """Initializes the Manager CodeAgent."""
+    return CodeAgent(
+        tools=[], # Manager doesn't directly use tools, it delegates
+        model=model,
+        name="manager_agent",
+        description=(
+            "Acts as a router. Analyzes the user query and context (PDF indexed, CSV loaded) "
+            "and decides which specialized agent (search, data_analyst, rag_agent) to call. "
+            "The specialized agents are provided in additional_args."
         )
-
-        prompt = (
-            f"{expertise_message}\n"
-            f"Analyse du fichier CSV: {query}\n\n"
-            f"Notes additionnelles et contexte:\n{additional_notes}"
-        )
-
-        # Prepare args for the csv_analyzer tool (assuming it's implicitly available or passed)
-        csv_analyzer_args = {
-            "source_file": csv_args["source_file"],
-            "separator": csv_args["separator"],
-            "figures_dir": csv_args["figures_dir"],
-            "chunk_size": csv_args["chunk_size"]
-        }
-
-        # Run the data analyst agent with the prepared prompt and tool arguments
-        return data_analyst.run(prompt, additional_args={"csv_analyzer": csv_analyzer_args})
-
-    # --- Default to Search Agent ---
-    else:
-        print("Routing to Search agent.")
-        # Delegate to the search agent for general queries
-        return search_agent.run(query) 
+    ) 

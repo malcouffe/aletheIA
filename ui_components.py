@@ -6,6 +6,7 @@ from PyPDF2 import PdfReader
 from utils.pipeline_indexation.pdf_processor import analyser_pdf
 from utils.pipeline_indexation.csv_processor import CSVProcessor
 from smolagents import OpenAIServerModel # For type hinting if needed, or pass model instance
+import mimetypes # For file type detection
 
 # Define PDF_CLASSES here or pass it as an argument if preferred
 PDF_CLASSES = ['Select Classification...', 'finance policies', 'legal AML', 'general']
@@ -26,272 +27,344 @@ def cleanup_resources(figures_dir):
     else:
         os.makedirs(figures_dir, exist_ok=True)
 
-
-def handle_pdf_upload(model: OpenAIServerModel, mistral_api_key: str, user_notes: str):
+def handle_uploaded_file(
+    uploaded_file,
+    session_id: str, # Added session_id
+    model: OpenAIServerModel | None,
+    mistral_api_key: str,
+    user_notes: str,
+    use_memory_limit: bool,
+    figures_dir: str # Note: figures_dir might need rethinking (per-file?)
+    ):
     """
-    Handles the PDF file upload, analysis, classification selection, and indexing UI.
-
-    Manages relevant session state variables for PDF processing.
-
-    Args:
-        model: The initialized OpenAIServerModel instance for analysis.
-        mistral_api_key: The Mistral API key for indexing.
-        user_notes: Additional notes provided by the user.
+    Detects the type of the uploaded file, processes it, and returns its details.
+    Does NOT set session state directly. Creates unique paths using session_id and a new file_id.
 
     Returns:
-        None. Updates session state directly.
+        dict | None: {'file_id': str, 'details': dict} on success, None on failure.
     """
-    st.subheader("Chargement de Fichier PDF")
-    uploaded_file = st.file_uploader("Déposer un fichier PDF", type=['pdf'], key="pdf_uploader")
+    # --- Check if this specific file object has already been processed --- 
+    if uploaded_file:
+        # Use name, size, and internal file_id for a robust key against reruns
+        current_file_key = f"{uploaded_file.name}_{uploaded_file.size}_{uploaded_file.file_id}"
+        if st.session_state.get('last_processed_file_key') == current_file_key:
+            print(f"Skipping re-processing for already processed file object: {current_file_key}")
+            return None # Don't process the same object again
+    else:
+        # Should not happen if called from app.py's check, but good practice
+        return None
+    # ------------------------------------------------------------------
 
-    if uploaded_file is not None:
-        current_file_id = f"{uploaded_file.name}-{uploaded_file.size}"
+    file_type = None
+    file_name = uploaded_file.name
+    file_id = str(uuid.uuid4()) # Generate unique ID for storing details
 
-        # Process only if it's a new file compared to the last processed one
-        if st.session_state.get('uploaded_file_id') != current_file_id:
-            st.session_state.uploaded_file_id = current_file_id
-            # Reset PDF state for the new file
-            st.session_state.pdf_summary = None
-            st.session_state.pdf_suggested_classification = None
-            st.session_state.pdf_classification = None
-            st.session_state.pdf_indexed = False
-            st.session_state.pdf_temp_path = None
-            st.session_state.pdf_db_path = None
-            # Clean up previous temp dir if it exists from a *different* session/file
-            pdf_temp_dir_old = os.path.join("data", "pdf_temp", st.session_state.session_id)
-            if os.path.exists(pdf_temp_dir_old):
-                 try: shutil.rmtree(pdf_temp_dir_old)
-                 except Exception: pass
+    # Use mimetype first, fallback to extension
+    mime_type, _ = mimetypes.guess_type(file_name)
+    print(f"Uploaded file: {file_name}, MIME type: {mime_type}, Streamlit type: {uploaded_file.type}, Assigned file_id: {file_id}")
 
+    if uploaded_file.type == "application/pdf" or (mime_type == "application/pdf") or file_name.lower().endswith('.pdf'):
+        file_type = "pdf"
+    elif uploaded_file.type == "text/csv" or (mime_type == "text/csv") or file_name.lower().endswith('.csv'):
+        file_type = "csv"
+    elif uploaded_file.type == "text/plain" or (mime_type == "text/plain") or file_name.lower().endswith('.txt'):
+        file_type = "txt"
+    else:
+        # Attempt guess based on extension if type is generic (like application/octet-stream)
+         if file_name.lower().endswith('.pdf'): file_type = "pdf"
+         elif file_name.lower().endswith('.csv'): file_type = "csv"
+         elif file_name.lower().endswith('.txt'): file_type = "txt"
 
-            if not model:
-                st.warning("Clé API OpenAI requise pour analyser le PDF.")
-            else:
-                pdf_temp_dir = os.path.join("data", "pdf_temp", st.session_state.session_id)
-                os.makedirs(pdf_temp_dir, exist_ok=True)
-                pdf_path = os.path.join(pdf_temp_dir, uploaded_file.name)
+    details = None # Initialize details dictionary
+
+    if file_type == "pdf":
+        st.info(f"Fichier PDF '{file_name}' (ID: {file_id}) détecté. Traitement en cours...")
+        # Pass file_id and session_id
+        details = _handle_pdf_logic(
+            file_id=file_id,
+            uploaded_file=uploaded_file,
+            session_id=session_id,
+            model=model,
+            mistral_api_key=mistral_api_key,
+            user_notes=user_notes
+        )
+    elif file_type == "csv":
+        st.info(f"Fichier CSV '{file_name}' (ID: {file_id}) détecté. Traitement en cours...")
+        chunk_size = 100000 if use_memory_limit else None
+        # Pass file_id and session_id
+        details = _handle_csv_logic(
+            file_id=file_id,
+            uploaded_file=uploaded_file,
+            session_id=session_id,
+            user_notes=user_notes,
+            use_memory_limit=use_memory_limit,
+            figures_dir=figures_dir, # Keep passing for now
+            chunk_size=chunk_size
+        )
+    elif file_type == "txt":
+        st.warning(f"Fichier TXT '{file_name}' détecté. L'analyse de fichiers TXT n'est pas encore implémentée.")
+        # Return None as it's not handled
+        return None
+    else:
+        st.error(f"Type de fichier non supporté ou non détecté pour '{file_name}' (Type MIME: {mime_type}, Type Streamlit: {uploaded_file.type}). Veuillez charger un fichier PDF, CSV ou TXT.")
+        return None
+
+    # If processing was successful, add common details and return structured dict
+    if details:
+        details['file_id'] = file_id # Ensure file_id is in details
+        details['filename'] = file_name
+        details['type'] = file_type
+        details['user_notes'] = user_notes
+
+        # Store the key of the file object we just successfully processed
+        st.session_state.last_processed_file_key = current_file_key
+
+        return {'file_id': file_id, 'details': details}
+    else:
+        # Processing failed, handler should have shown an error
+        return None
+
+def _handle_pdf_logic(
+    file_id: str, # Added file_id
+    uploaded_file,
+    session_id: str, # Added session_id
+    model: OpenAIServerModel | None,
+    mistral_api_key: str, # Keep for now, although might be removed if model handles it
+    user_notes: str
+    ):
+    """
+    Internal logic to handle PDF processing (analysis, classification suggestion).
+    Returns a dictionary with processing results or None on failure.
+    Does NOT set session state.
+    """
+    if not model:
+        st.warning("Clé API OpenAI requise pour analyser le PDF.")
+        return None
+
+    # Create specific temp directory using session_id and file_id
+    pdf_temp_dir = os.path.join("data", "pdf_temp", session_id, file_id)
+    os.makedirs(pdf_temp_dir, exist_ok=True)
+    pdf_path = os.path.join(pdf_temp_dir, uploaded_file.name)
+
+    try:
+        with open(pdf_path, "wb") as f:
+            f.write(uploaded_file.getvalue())
+
+        with st.spinner(f"Extraction du texte du PDF '{uploaded_file.name}'..."):
+            reader = PdfReader(pdf_path)
+            pdf_text = "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
+
+        if pdf_text:
+            with st.spinner("Analyse par l'IA (Résumé & Classification)..."):
+                classification_prompt = (
+                    f"Analysez le texte PDF suivant et les notes de l'utilisateur. "
+                    f"1. Fournissez un résumé concis (max 150 mots).\n"
+                    f"2. Suggérez la classification la plus appropriée parmi : {', '.join(PDF_CLASSES[1:])}. "
+                    f"Répondez UNIQUEMENT avec le résumé suivi de '\nSuggested Classification: [classe]' à la fin.\n\n"
+                    f"Notes de l'utilisateur: {user_notes if user_notes else 'Aucune'}\n\n"
+                    f"Texte du PDF (premiers 5000 caractères):\n{pdf_text[:5000]}"
+                )
                 try:
-                    # Save the uploaded file temporarily
-                    with open(pdf_path, "wb") as f:
-                        f.write(uploaded_file.getvalue())
-                    st.session_state.pdf_temp_path = pdf_path
-
-                    # 1. Extract text
-                    with st.spinner(f"Extraction du texte du PDF '{uploaded_file.name}'..."):
-                        reader = PdfReader(pdf_path)
-                        pdf_text = "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
-
-                    # 2. Generate Summary and Suggest Classification (only if text was extracted)
-                    if pdf_text:
-                        with st.spinner("Analyse par l'IA (Résumé & Classification)..."):
-                            classification_prompt = (
-                                f"Analysez le texte PDF suivant et les notes de l'utilisateur. "
-                                f"1. Fournissez un résumé concis (max 150 mots).\n"
-                                f"2. Suggérez la classification la plus appropriée parmi : {', '.join(PDF_CLASSES[1:])}. "
-                                f"Répondez UNIQUEMENT avec le résumé suivi de \\'\\nSuggested Classification: [classe]\\' à la fin.\\n\\n"
-                                f"Notes de l'utilisateur: {user_notes if user_notes else 'Aucune'}\\n\\n"
-                                f"Texte du PDF (premiers 5000 caractères):\\n{pdf_text[:5000]}"
-                            )
-                            try:
-                                chat_message = model(messages=[{"role": "user", "content": classification_prompt}])
-                                llm_response = chat_message.content
-
-                                summary = llm_response
-                                suggested_class = None
-                                if "\nSuggested Classification:" in llm_response:
-                                    parts = llm_response.split("\nSuggested Classification:")
-                                    summary = parts[0].strip()
-                                    suggestion_text = parts[1].strip()
-                                    for cls in PDF_CLASSES[1:]:
-                                        if cls.lower() == suggestion_text.lower():
-                                            suggested_class = cls
-                                            break
-                                    if not suggested_class:
-                                        print(f"Warning: LLM suggested class '{suggestion_text}' not in allowed list {PDF_CLASSES[1:]}, defaulting to general.")
-                                        suggested_class = 'general'
-                                else:
-                                     print("Warning: Could not parse suggested classification from LLM response.")
-                                     suggested_class = 'general'
-
-                                st.session_state.pdf_summary = summary
-                                st.session_state.pdf_suggested_classification = suggested_class
-                                st.session_state.pdf_classification = suggested_class or PDF_CLASSES[0]
-
-                            except Exception as llm_error:
-                                st.error(f"Erreur lors de la communication avec l'IA : {llm_error}")
-                                st.session_state.pdf_summary = "Erreur lors de la génération du résumé."
+                    chat_message = model(messages=[{"role": "user", "content": classification_prompt}])
+                    llm_response = chat_message.content
+                    summary = llm_response
+                    suggested_class = None
+                    if "\nSuggested Classification:" in llm_response:
+                        parts = llm_response.split("\nSuggested Classification:")
+                        summary = parts[0].strip()
+                        suggestion_text = parts[1].strip()
+                        for cls in PDF_CLASSES[1:]:
+                            # Case-insensitive comparison
+                            if cls.lower() == suggestion_text.lower():
+                                suggested_class = cls
+                                break
+                        if not suggested_class:
+                            print(f"Warning: LLM suggested class '{suggestion_text}' not in allowed list {PDF_CLASSES[1:]}, defaulting to 'general'.")
+                            suggested_class = 'general' # Default to general if suggestion is weird
                     else:
-                        st.warning("Aucun texte n'a pu être extrait du PDF.")
-                        st.session_state.pdf_summary = "Impossible d'extraire le texte."
+                            print("Warning: Could not parse suggested classification from LLM response. Defaulting to 'general'.")
+                            suggested_class = 'general' # Default if format is wrong
 
-                except Exception as e:
-                    st.error(f"Erreur lors de la préparation du PDF : {str(e)}")
-                    if 'pdf_temp_dir' in locals() and os.path.exists(pdf_temp_dir):
-                        try: shutil.rmtree(pdf_temp_dir)
-                        except Exception: pass
-                    st.session_state.uploaded_file_id = None
-                    st.session_state.pdf_summary = None
-                    st.session_state.pdf_suggested_classification = None
-                    st.session_state.pdf_classification = None
-                    st.session_state.pdf_indexed = False
-                    st.session_state.pdf_temp_path = None
-                    st.session_state.pdf_db_path = None
+                    # Return details instead of setting state
+                    pdf_details = {
+                        'summary': summary,
+                        'suggested_classification': suggested_class,
+                        'classification': None, # Initially unclassified
+                        'temp_path': pdf_path,
+                        'status': 'awaiting_classification',
+                        'indexed': False,
+                        'db_path': None
+                    }
+                    return pdf_details
 
-        # --- Display Summary & Classification Choice ---
-        if st.session_state.get('pdf_summary'):
-            st.subheader("Résumé du PDF (généré par IA)")
-            st.markdown(st.session_state.pdf_summary)
+                except Exception as llm_error:
+                    st.error(f"Erreur lors de la communication avec l'IA : {llm_error}")
+                    return None # Indicate failure
+        else:
+            st.warning("Aucun texte n'a pu être extrait du PDF.")
+            # Return minimal info indicating failure to extract text but file exists
+            return {'summary': "Impossible d'extraire le texte.", 'temp_path': pdf_path, 'status': 'error_extraction'}
 
-            current_selection = st.session_state.get('pdf_classification', PDF_CLASSES[0])
-            try:
-                default_index = PDF_CLASSES.index(current_selection)
-            except ValueError:
-                default_index = 0
-
-            def update_classification():
-                new_selection = st.session_state.pdf_classification_selector
-                if new_selection != st.session_state.get('pdf_classification'):
-                    st.session_state.pdf_classification = new_selection if new_selection != PDF_CLASSES[0] else None
-                    st.session_state.pdf_indexed = False
-                    st.session_state.pdf_db_path = None
-                    print(f"Classification selection changed to: {st.session_state.pdf_classification}")
-
-            selected_class = st.selectbox(
-                "Confirmez ou modifiez la classification de ce document :",
-                PDF_CLASSES,
-                key='pdf_classification_selector',
-                index=default_index,
-                on_change=update_classification
-            )
-
-            disable_button = not st.session_state.get('pdf_classification') or st.session_state.get('pdf_indexed')
-            button_text = "Confirmer la classification et indexer"
-            if st.session_state.get('pdf_indexed') and st.session_state.get('pdf_classification') == selected_class:
-                 button_text = f"Déjà indexé comme '{selected_class}'"
-
-            if st.button(button_text, key="index_pdf_button", disabled=disable_button):
-                if st.session_state.pdf_classification:
-                     st.info(f"Classification '{st.session_state.pdf_classification}' sélectionnée. Tentative d'indexation...")
-                     if not mistral_api_key:
-                         st.error("Clé API Mistral requise pour l'indexation PDF.")
-                     elif not st.session_state.get('pdf_temp_path') or not os.path.exists(st.session_state.pdf_temp_path):
-                         st.error("Erreur : Chemin du fichier PDF temporaire introuvable pour l'indexation.")
-                     else:
-                         try:
-                             with st.spinner(f"Indexation du PDF sous '{st.session_state.pdf_classification}' en cours..."):
-                                 os.environ["MISTRAL_API_KEY"] = mistral_api_key
-                                 base_db_dir = os.path.join("data", "output", "vectordb", st.session_state.pdf_classification)
-                                 os.makedirs(base_db_dir, exist_ok=True)
-                                 db_path = os.path.join(base_db_dir, f"session_{st.session_state.session_id}")
-                                 print(f"Indexing PDF. Using DB path: {db_path}")
-                                 analysis_summary = analyser_pdf(st.session_state.pdf_temp_path, db_path=db_path, exporter=False)
-                                 st.session_state.pdf_db_path = db_path
-                                 st.session_state.pdf_indexed = True
-                                 st.success(f"PDF indexé avec succès dans la catégorie '{st.session_state.pdf_classification}'.")
-
-                                 # --- Cleanup Temporary PDF ---
-                                 try:
-                                     if st.session_state.get('pdf_temp_path') and os.path.exists(st.session_state.pdf_temp_path):
-                                         os.remove(st.session_state.pdf_temp_path)
-                                         print(f"Removed temporary PDF: {st.session_state.pdf_temp_path}")
-                                 except Exception as cleanup_error:
-                                     st.warning(f"Could not remove temporary PDF file: {cleanup_error}")
-                                 # ---------------------------
-                                 st.rerun()
-
-                         except Exception as index_error:
-                             st.error(f"Erreur lors de l'indexation du PDF : {index_error}")
-                             st.session_state.pdf_indexed = False
-                             st.session_state.pdf_db_path = None
-
-    elif uploaded_file is None and st.session_state.get('uploaded_file_id') is not None:
-        # Clear PDF state if file is removed
-        st.session_state.uploaded_file_id = None
-        st.session_state.pdf_summary = None
-        st.session_state.pdf_suggested_classification = None
-        st.session_state.pdf_classification = None
-        st.session_state.pdf_indexed = False
-        st.session_state.pdf_temp_path = None
-        st.session_state.pdf_db_path = None
-        pdf_temp_dir = os.path.join("data", "pdf_temp", st.session_state.session_id)
+    except Exception as e:
+        st.error(f"Erreur lors de la préparation du PDF : {str(e)}")
+        # Clean up temp dir if creation failed partially? Maybe not needed if os.makedirs handles it.
+        # Ensure temp dir is removed if it exists but processing failed fundamentally
         if os.path.exists(pdf_temp_dir):
-            try:
-                shutil.rmtree(pdf_temp_dir)
-                print(f"Removed temporary PDF directory: {pdf_temp_dir}")
-            except Exception as e:
-                st.warning(f"Could not remove temporary PDF directory {pdf_temp_dir}: {e}")
+             try: shutil.rmtree(pdf_temp_dir)
+             except Exception as rm_err: print(f"Error cleaning up failed PDF temp dir {pdf_temp_dir}: {rm_err}")
+        return None # Indicate failure
 
-def handle_csv_upload(user_notes: str, use_memory_limit: bool, figures_dir: str, chunk_size: int | None):
+def index_pdf(file_id: str, session_id: str, mistral_api_key: str):
+     """
+     Performs the PDF indexing using the specified file_id and session state.
+     Reads details from st.session_state.processed_files[file_id].
+     Updates st.session_state.processed_files[file_id] on success/failure.
+     """
+     if file_id not in st.session_state.get('processed_files', {}):
+         st.error(f"Cannot index PDF. File ID '{file_id}' not found in session state.")
+         return
+
+     file_details = st.session_state.processed_files[file_id]
+
+     # Check current status and required info
+     if file_details.get('status') != 'awaiting_classification' and file_details.get('status') != 'classified': # Allow re-indexing if classified but not indexed?
+          st.warning(f"Cannot index PDF '{file_details.get('filename')}'. Status is '{file_details.get('status')}'.")
+          return
+     if file_details.get('indexed'):
+         st.warning(f"PDF '{file_details.get('filename')}' is already indexed.")
+         return
+     if not file_details.get('classification'):
+          st.warning(f"Cannot index PDF '{file_details.get('filename')}'. No classification selected.")
+          return
+     if not mistral_api_key:
+         st.error("Clé API Mistral requise pour l'indexation PDF.")
+         return
+     pdf_temp_path = file_details.get('temp_path')
+     if not pdf_temp_path or not os.path.exists(pdf_temp_path):
+         st.error(f"Erreur : Chemin du fichier PDF temporaire '{pdf_temp_path}' introuvable pour l'indexation du fichier ID '{file_id}'.")
+         # Update status to reflect error
+         st.session_state.processed_files[file_id]['status'] = 'error_indexing_missing_temp'
+         return
+
+     classification = file_details['classification']
+     st.info(f"Classification '{classification}' sélectionnée pour '{file_details.get('filename')}'. Tentative d'indexation...")
+
+     try:
+         with st.spinner(f"Indexation du PDF '{file_details.get('filename')}' (ID: {file_id}) sous '{classification}' en cours..."):
+             os.environ["MISTRAL_API_KEY"] = mistral_api_key
+
+             # Create DB path incorporating session_id and file_id for uniqueness
+             base_db_dir = os.path.join("data", "output", "vectordb", classification)
+             db_path = os.path.join(base_db_dir, f"session_{session_id}_file_{file_id}")
+             os.makedirs(os.path.dirname(db_path), exist_ok=True) # Ensure parent dir exists
+
+             print(f"Indexing PDF. File ID: {file_id}, Temp Path: {pdf_temp_path}, DB path: {db_path}")
+             # Assuming analyser_pdf takes path and db_path
+             analysis_summary = analyser_pdf(pdf_temp_path, db_path=db_path, exporter=False)
+
+             # Update state for this specific file on success
+             st.session_state.processed_files[file_id].update({
+                 'db_path': db_path,
+                 'indexed': True,
+                 'status': 'indexed'
+                 # Keep filename, classification, summary etc.
+             })
+             st.success(f"PDF '{file_details.get('filename')}' (ID: {file_id}) indexé avec succès dans la catégorie '{classification}'.")
+
+             # --- Cleanup Temporary PDF ---
+             try:
+                 if os.path.exists(pdf_temp_path):
+                     os.remove(pdf_temp_path)
+                     print(f"Removed temporary PDF: {pdf_temp_path}")
+                     # Update state to remove temp_path reference
+                     st.session_state.processed_files[file_id]['temp_path'] = None
+             except Exception as cleanup_error:
+                 st.warning(f"Could not remove temporary PDF file '{pdf_temp_path}': {cleanup_error}")
+             # ---------------------------\
+             # st.rerun() # Avoid immediate rerun from component, let app handle it
+
+     except Exception as index_error:
+         st.error(f"Erreur lors de l'indexation du PDF '{file_details.get('filename')}' (ID: {file_id}): {index_error}")
+         # Update status to reflect error, clear db_path/indexed status
+         st.session_state.processed_files[file_id].update({
+             'indexed': False,
+             'db_path': None,
+             'status': 'error_indexing'
+             # Keep classification, summary, temp_path (might be needed for retry?)
+         })
+
+def _handle_csv_logic(
+    file_id: str, # Added file_id
+    uploaded_file,
+    session_id: str, # Added session_id
+    user_notes: str,
+    use_memory_limit: bool,
+    figures_dir: str, # Keep passing for now
+    chunk_size: int | None
+    ):
     """
-    Handles the CSV file upload, validation, analysis, and returns arguments for the Data Analyst agent.
-
-    Args:
-        user_notes: Additional notes provided by the user.
-        use_memory_limit: Boolean indicating whether to use chunking.
-        figures_dir: Path to the directory for saving figures.
-        chunk_size: The chunk size to use if memory limit is enabled.
-
-    Returns:
-        dict | None: A dictionary containing arguments for the data_analyst agent
-                     if a valid CSV is processed, otherwise None.
+    Internal logic to handle CSV processing (validation, analysis prep).
+    Returns a dictionary with processing results or None on failure.
+    Does NOT set session state.
     """
-    st.subheader("Chargement de Fichier CSV")
-    uploaded_file = st.file_uploader("Déposer un fichier CSV", type=['csv'], key="csv_uploader")
-
     csv_args = None
-    if uploaded_file is not None:
+    csv_file_path = None # Keep track for potential cleanup
+
+    try:
+        # Create specific temp directory using session_id and file_id
+        csv_temp_dir = os.path.join("data", "csv_temp", session_id, file_id)
+        os.makedirs(csv_temp_dir, exist_ok=True)
+
+        original_filename = uploaded_file.name
+        # Keep original filename for reference, save with original name in its unique dir
+        csv_file_path = os.path.join(csv_temp_dir, original_filename)
+
         try:
-            # Create directory for CSV files if it doesn't exist
-            csv_dir = os.path.join("data", "csv_files")
-            os.makedirs(csv_dir, exist_ok=True)
-
-            # Generate unique filename
-            original_filename = uploaded_file.name
-            base_name = os.path.splitext(original_filename)[0]
-            unique_filename = f"{base_name}_{str(uuid.uuid4())[:8]}.csv"
-            csv_file_path = os.path.join(csv_dir, unique_filename)
-
-            # Read and save file content with encoding detection
+            # Decode with fallback
+            file_content = uploaded_file.getvalue().decode("utf-8")
+        except UnicodeDecodeError:
             try:
-                file_content = uploaded_file.getvalue().decode("utf-8")
+                file_content = uploaded_file.getvalue().decode("latin-1")
             except UnicodeDecodeError:
-                try:
-                    file_content = uploaded_file.getvalue().decode("latin-1")
-                except UnicodeDecodeError:
-                    file_content = uploaded_file.getvalue().decode("iso-8859-1", errors="replace")
+                file_content = uploaded_file.getvalue().decode("iso-8859-1", errors="replace")
 
-            with open(csv_file_path, "w", encoding="utf-8") as f:
-                f.write(file_content)
+        with open(csv_file_path, "w", encoding="utf-8") as f:
+            f.write(file_content)
 
-            # Use CSVProcessor for validation and analysis
-            csv_processor = CSVProcessor()
-            is_valid, validation_message = csv_processor.validate_csv(csv_file_path, auto_detect=True)
+        csv_processor = CSVProcessor()
+        # Pass path for validation
+        is_valid, validation_message = csv_processor.validate_csv(csv_file_path, auto_detect=True)
 
-            if not is_valid:
-                st.error(f"Le fichier CSV n'est pas valide: {validation_message}")
-                # Clean up invalid file? Optional.
-                # os.remove(csv_file_path)
-                return None # Stop processing if invalid
+        if not is_valid:
+            st.error(f"Le fichier CSV '{original_filename}' (ID: {file_id}) n'est pas valide: {validation_message}")
+            if os.path.exists(csv_file_path):
+                try: os.remove(csv_file_path) # Clean up invalid file
+                except Exception as rm_err: print(f"Error removing invalid CSV {csv_file_path}: {rm_err}")
+            # Clean up the temp dir as well if file was the only thing in it
+            try: os.rmdir(csv_temp_dir)
+            except Exception as rmdir_err: print(f"Error removing empty temp dir {csv_temp_dir}: {rmdir_err}")
+            return None # Stop
 
-            separator = csv_processor.separator
-            encoding = csv_processor.encoding
-            basic_analysis = csv_processor.analyze_csv(csv_file_path, auto_detect=True)
-            columns = basic_analysis.get("colonnes", [])
-            rows = basic_analysis.get("nombre_lignes", 0)
+        separator = csv_processor.separator
+        encoding = csv_processor.encoding
+        basic_analysis = csv_processor.analyze_csv(csv_file_path, auto_detect=True)
+        columns = basic_analysis.get("colonnes", [])
+        rows = basic_analysis.get("nombre_lignes", 0)
 
-            # Memory warning logic
-            file_size_mb = os.path.getsize(csv_file_path) / (1024 * 1024)
-            memory_warning = ""
-            if file_size_mb > 10 and not use_memory_limit:
-                memory_warning = "⚠️ Le fichier est relativement volumineux. L'option de limitation de mémoire est recommandée."
+        file_size_mb = os.path.getsize(csv_file_path) / (1024 * 1024)
+        memory_warning = ""
+        if file_size_mb > 10 and not use_memory_limit:
+            memory_warning = "⚠️ Le fichier est relativement volumineux. L'option de limitation de mémoire est recommandée."
+            # Note: The checkbox state is managed in app.py, this is just informational
 
-            # Prepare notes for data_analyst
-            data_analyst_notes = f"""
+        # Update path in notes
+        data_analyst_notes = f"""
 # Guide d'analyse de données
 - Fichier: {original_filename} (Encodage détecté: {encoding})
+- File ID: {file_id}
 - Chemin: {csv_file_path}
 - Séparateur: '{separator}'
-- Dossier pour figures: '{figures_dir}'
+- Dossier pour figures: '{figures_dir}' # Revisit if figures should be per-file
 - Taille du fichier: {file_size_mb:.2f} MB
 - Nombre de lignes: {rows}
 - Nombre de colonnes: {len(columns)}
@@ -308,26 +381,45 @@ def handle_csv_upload(user_notes: str, use_memory_limit: bool, figures_dir: str,
 3. Exploration des données avec df.info(), df.describe() et vérification des valeurs manquantes
 4. Création de visualisations adaptées au type de données
 5. Enregistrer toutes les figures dans le dossier '{figures_dir}'
-            """
+        """
 
-            csv_args = {
-                "source_file": csv_file_path,
-                "separator": separator,
-                "additional_notes": data_analyst_notes,
-                "figures_dir": figures_dir,
-                "chunk_size": chunk_size
-            }
+        csv_args = {
+            "source_file": csv_file_path,
+            "separator": separator,
+            "additional_notes": data_analyst_notes,
+            "figures_dir": figures_dir,
+            "chunk_size": chunk_size # Use calculated chunk_size
+            # Add more analysis results if needed
+        }
 
-            info_message = f"Fichier CSV '{original_filename}' validé avec séparateur '{separator}'. L'agent Data Analyst sera utilisé."
-            if memory_warning:
-                info_message += f" {memory_warning}"
-            st.info(info_message)
+        info_message = f"Fichier CSV '{original_filename}' validé avec séparateur '{separator}'. Prêt pour l'analyse."
+        if memory_warning:
+            info_message += f" {memory_warning}"
+        st.success(info_message) # Use success message
 
-        except Exception as e:
-            st.error(f"Erreur lors du traitement du fichier CSV: {str(e)}")
-            # Clean up file if processing failed? Optional.
-            # if 'csv_file_path' in locals() and os.path.exists(csv_file_path):
-            #     os.remove(csv_file_path)
-            return None # Return None on error
+        # Return details
+        csv_details = {
+            'csv_args': csv_args,
+            'temp_path': csv_file_path, # Path to the saved CSV
+            'status': 'ready',
+            'columns': columns, # Store columns info
+            'rows': rows, # Store row count
+            'size_mb': file_size_mb # Store size
+        }
+        return csv_details
 
-    return csv_args # Return None if no file uploaded or args if successful 
+    except Exception as e:
+        st.error(f"Erreur lors du traitement du fichier CSV '{uploaded_file.name}' (ID: {file_id}): {str(e)}")
+        # Clean up temp file/dir on error
+        if csv_file_path and os.path.exists(csv_file_path):
+            try: os.remove(csv_file_path)
+            except Exception as rm_err: print(f"Error removing CSV {csv_file_path} on error: {rm_err}")
+        if 'csv_temp_dir' in locals() and os.path.exists(csv_temp_dir):
+             try: shutil.rmtree(csv_temp_dir)
+             except Exception as rmdir_err: print(f"Error removing temp dir {csv_temp_dir} on error: {rmdir_err}")
+        return None # Indicate failure
+
+# Keep handle_csv_upload for now? It seems redundant with the new handle_uploaded_file
+# Let's comment it out as it relies on session state / direct uploaders
+# def handle_csv_upload(user_notes: str, use_memory_limit: bool, figures_dir: str, chunk_size: int | None):
+# ... (rest of the function commented out) ... 

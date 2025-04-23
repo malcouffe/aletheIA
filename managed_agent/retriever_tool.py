@@ -14,6 +14,7 @@ class RetrieverTool(Tool):
             "type": "string",
             "description": "Optional additional notes or context to refine the search query.",
             "optional": True,
+            "nullable": True,
         }
     }
     output_type = "string"
