@@ -5,8 +5,8 @@ import uuid
 from PyPDF2 import PdfReader
 from utils.pipeline_indexation.pdf_processor import analyser_pdf
 from utils.pipeline_indexation.csv_processor import CSVProcessor
-from smolagents import OpenAIServerModel # For type hinting if needed, or pass model instance
-import mimetypes # For file type detection
+from smolagents import OpenAIServerModel
+import mimetypes
 
 # Define PDF_CLASSES here or pass it as an argument if preferred
 PDF_CLASSES = ['Select Classification...', 'finance policies', 'legal AML', 'general']
@@ -32,7 +32,6 @@ def handle_uploaded_file(
     session_id: str, # Added session_id
     model: OpenAIServerModel | None,
     mistral_api_key: str,
-    user_notes: str,
     use_memory_limit: bool,
     figures_dir: str # Note: figures_dir might need rethinking (per-file?)
     ):
@@ -86,7 +85,8 @@ def handle_uploaded_file(
             session_id=session_id,
             model=model,
             mistral_api_key=mistral_api_key,
-            user_notes=user_notes
+            use_memory_limit=use_memory_limit,
+            figures_dir=figures_dir
         )
     elif file_type == "csv":
         st.info(f"Fichier CSV '{file_name}' (ID: {file_id}) détecté. Traitement en cours...")
@@ -96,7 +96,6 @@ def handle_uploaded_file(
             file_id=file_id,
             uploaded_file=uploaded_file,
             session_id=session_id,
-            user_notes=user_notes,
             use_memory_limit=use_memory_limit,
             figures_dir=figures_dir, # Keep passing for now
             chunk_size=chunk_size
@@ -114,7 +113,6 @@ def handle_uploaded_file(
         details['file_id'] = file_id # Ensure file_id is in details
         details['filename'] = file_name
         details['type'] = file_type
-        details['user_notes'] = user_notes
 
         # Store the key of the file object we just successfully processed
         st.session_state.last_processed_file_key = current_file_key
@@ -130,7 +128,8 @@ def _handle_pdf_logic(
     session_id: str, # Added session_id
     model: OpenAIServerModel | None,
     mistral_api_key: str, # Keep for now, although might be removed if model handles it
-    user_notes: str
+    use_memory_limit: bool,
+    figures_dir: str # Note: figures_dir might need rethinking (per-file?)
     ):
     """
     Internal logic to handle PDF processing (analysis, classification suggestion).
@@ -157,11 +156,10 @@ def _handle_pdf_logic(
         if pdf_text:
             with st.spinner("Analyse par l'IA (Résumé & Classification)..."):
                 classification_prompt = (
-                    f"Analysez le texte PDF suivant et les notes de l'utilisateur. "
+                    f"Analysez le texte PDF suivant. "
                     f"1. Fournissez un résumé concis (max 150 mots).\n"
                     f"2. Suggérez la classification la plus appropriée parmi : {', '.join(PDF_CLASSES[1:])}. "
                     f"Répondez UNIQUEMENT avec le résumé suivi de '\nSuggested Classification: [classe]' à la fin.\n\n"
-                    f"Notes de l'utilisateur: {user_notes if user_notes else 'Aucune'}\n\n"
                     f"Texte du PDF (premiers 5000 caractères):\n{pdf_text[:5000]}"
                 )
                 try:
@@ -214,43 +212,57 @@ def _handle_pdf_logic(
              except Exception as rm_err: print(f"Error cleaning up failed PDF temp dir {pdf_temp_dir}: {rm_err}")
         return None # Indicate failure
 
-def index_pdf(file_id: str, session_id: str, mistral_api_key: str):
+def index_pdf(file_id: str, file_details: dict, session_id: str, mistral_api_key: str) -> dict | None:
      """
-     Performs the PDF indexing using the specified file_id and session state.
-     Reads details from st.session_state.processed_files[file_id].
-     Updates st.session_state.processed_files[file_id] on success/failure.
+     Performs the PDF indexing using the provided file details and session ID.
+     Returns an updated dictionary with indexing results or None on failure.
+     Does NOT modify session state directly, but uses st functions for user feedback.
+
+     Args:
+         file_id (str): The unique ID of the file being processed.
+         file_details (dict): The dictionary containing details about the file.
+         session_id (str): The ID of the current user session.
+         mistral_api_key (str): The Mistral API key for indexing.
+
+     Returns:
+         dict | None: An updated file details dictionary on success/error, or None on critical setup failure.
      """
-     if file_id not in st.session_state.get('processed_files', {}):
-         st.error(f"Cannot index PDF. File ID '{file_id}' not found in session state.")
-         return
+     # Create a copy to avoid modifying the original dict directly before returning
+     updated_details = file_details.copy()
 
-     file_details = st.session_state.processed_files[file_id]
-
-     # Check current status and required info
-     if file_details.get('status') != 'awaiting_classification' and file_details.get('status') != 'classified': # Allow re-indexing if classified but not indexed?
-          st.warning(f"Cannot index PDF '{file_details.get('filename')}'. Status is '{file_details.get('status')}'.")
-          return
-     if file_details.get('indexed'):
-         st.warning(f"PDF '{file_details.get('filename')}' is already indexed.")
-         return
-     if not file_details.get('classification'):
-          st.warning(f"Cannot index PDF '{file_details.get('filename')}'. No classification selected.")
-          return
+     # Check current status and required info from the input details
+     if updated_details.get('status') != 'awaiting_classification' and updated_details.get('status') != 'classified':
+          st.warning(f"Cannot index PDF '{updated_details.get('filename')}'. Status is '{updated_details.get('status')}'.")
+          # Return None or original details? Let's return original details to signify no state change attempted.
+          return updated_details # Or return None? Returning details seems better.
+     if updated_details.get('indexed'):
+         st.warning(f"PDF '{updated_details.get('filename')}' is already indexed.")
+         return updated_details
+     if not updated_details.get('classification'):
+          st.warning(f"Cannot index PDF '{updated_details.get('filename')}'. No classification selected.")
+          return updated_details
      if not mistral_api_key:
          st.error("Clé API Mistral requise pour l'indexation PDF.")
-         return
-     pdf_temp_path = file_details.get('temp_path')
+         # This is a configuration error, perhaps return None? Or mark as error state?
+         updated_details['status'] = 'error_missing_api_key'
+         return updated_details
+     pdf_temp_path = updated_details.get('temp_path')
      if not pdf_temp_path or not os.path.exists(pdf_temp_path):
          st.error(f"Erreur : Chemin du fichier PDF temporaire '{pdf_temp_path}' introuvable pour l'indexation du fichier ID '{file_id}'.")
          # Update status to reflect error
-         st.session_state.processed_files[file_id]['status'] = 'error_indexing_missing_temp'
-         return
+         updated_details.update({
+             'indexed': False,
+             'db_path': None,
+             'status': 'error_indexing_missing_temp'
+         })
+         return updated_details
 
-     classification = file_details['classification']
-     st.info(f"Classification '{classification}' sélectionnée pour '{file_details.get('filename')}'. Tentative d'indexation...")
+     classification = updated_details['classification']
+     filename = updated_details.get('filename', f'ID: {file_id}') # Use filename or ID for messages
+     st.info(f"Classification '{classification}' sélectionnée pour '{filename}'. Tentative d'indexation...")
 
      try:
-         with st.spinner(f"Indexation du PDF '{file_details.get('filename')}' (ID: {file_id}) sous '{classification}' en cours..."):
+         with st.spinner(f"Indexation du PDF '{filename}' (ID: {file_id}) sous '{classification}' en cours..."):
              os.environ["MISTRAL_API_KEY"] = mistral_api_key
 
              # Create DB path incorporating session_id and file_id for uniqueness
@@ -260,44 +272,45 @@ def index_pdf(file_id: str, session_id: str, mistral_api_key: str):
 
              print(f"Indexing PDF. File ID: {file_id}, Temp Path: {pdf_temp_path}, DB path: {db_path}")
              # Assuming analyser_pdf takes path and db_path
-             analysis_summary = analyser_pdf(pdf_temp_path, db_path=db_path, exporter=False)
+             analysis_summary = analyser_pdf(pdf_temp_path, db_path=db_path, exporter=False) # Assuming this returns something useful? Currently ignored.
 
-             # Update state for this specific file on success
-             st.session_state.processed_files[file_id].update({
+             # Prepare updated details on success
+             updated_details.update({
                  'db_path': db_path,
                  'indexed': True,
-                 'status': 'indexed'
-                 # Keep filename, classification, summary etc.
+                 'status': 'indexed',
+                 'temp_path': None # Clear temp path after successful indexing and removal
              })
-             st.success(f"PDF '{file_details.get('filename')}' (ID: {file_id}) indexé avec succès dans la catégorie '{classification}'.")
+             st.success(f"PDF '{filename}' (ID: {file_id}) indexé avec succès dans la catégorie '{classification}'.")
 
              # --- Cleanup Temporary PDF ---
              try:
                  if os.path.exists(pdf_temp_path):
                      os.remove(pdf_temp_path)
                      print(f"Removed temporary PDF: {pdf_temp_path}")
-                     # Update state to remove temp_path reference
-                     st.session_state.processed_files[file_id]['temp_path'] = None
              except Exception as cleanup_error:
                  st.warning(f"Could not remove temporary PDF file '{pdf_temp_path}': {cleanup_error}")
-             # ---------------------------\
-             # st.rerun() # Avoid immediate rerun from component, let app handle it
+                 # Keep temp_path in details if removal failed? Or set to None anyway? Let's set to None.
+                 # updated_details['temp_path'] = pdf_temp_path # Keep if needed
+             # ---------------------------
+
+             return updated_details # Return the updated details dictionary
 
      except Exception as index_error:
-         st.error(f"Erreur lors de l'indexation du PDF '{file_details.get('filename')}' (ID: {file_id}): {index_error}")
+         st.error(f"Erreur lors de l'indexation du PDF '{filename}' (ID: {file_id}): {index_error}")
          # Update status to reflect error, clear db_path/indexed status
-         st.session_state.processed_files[file_id].update({
+         updated_details.update({
              'indexed': False,
              'db_path': None,
              'status': 'error_indexing'
              # Keep classification, summary, temp_path (might be needed for retry?)
          })
+         return updated_details # Return the updated details dictionary with error status
 
 def _handle_csv_logic(
     file_id: str, # Added file_id
     uploaded_file,
     session_id: str, # Added session_id
-    user_notes: str,
     use_memory_limit: bool,
     figures_dir: str, # Keep passing for now
     chunk_size: int | None
@@ -372,9 +385,6 @@ def _handle_csv_logic(
 # Colonnes détectées:
 {', '.join(columns)}
 
-# Notes de l'utilisateur:
-{user_notes if user_notes else "Aucune note spécifique fournie par l'utilisateur."}
-
 # Étapes recommandées:
 1. Charger le CSV avec le bon séparateur: pd.read_csv('{csv_file_path}', sep='{separator}')
 2. Validation du fichier CSV via csv_analyzer (déjà effectuée: {validation_message})
@@ -418,8 +428,3 @@ def _handle_csv_logic(
              try: shutil.rmtree(csv_temp_dir)
              except Exception as rmdir_err: print(f"Error removing temp dir {csv_temp_dir} on error: {rmdir_err}")
         return None # Indicate failure
-
-# Keep handle_csv_upload for now? It seems redundant with the new handle_uploaded_file
-# Let's comment it out as it relies on session state / direct uploaders
-# def handle_csv_upload(user_notes: str, use_memory_limit: bool, figures_dir: str, chunk_size: int | None):
-# ... (rest of the function commented out) ... 

@@ -8,7 +8,6 @@ from smolagents import (
     OpenAIServerModel
 )
 from langchain_community.vectorstores import Chroma
-from langchain_core.vectorstores import VectorStore
 from langchain_community.embeddings import HuggingFaceEmbeddings 
 from managed_agent.retriever_tool import RetrieverTool
 

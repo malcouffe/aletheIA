@@ -4,18 +4,17 @@ import shutil
 import uuid
 import torch
 from smolagents import OpenAIServerModel
-# Import necessary functions - remove old names
-from ui_components import cleanup_resources, handle_uploaded_file, index_pdf
-# Keep PDF_CLASSES needed for selectbox logic moved here
-import ui_components 
-from agent_utils import (
-    initialize_search_agent, 
-    initialize_data_analyst_agent, 
-    initialize_rag_agent, 
-    initialize_manager_agent
-)
+from ui_components import handle_uploaded_file, index_pdf
+import ui_components
 
 torch.classes.__path__ = []
+
+# --- Callback to update user notes ---
+def _update_user_notes_callback(file_id: str):
+    """Updates the user notes for the specified PDF file in session state."""
+    notes_key = f"user_notes_{file_id}"
+    if notes_key in st.session_state:
+        st.session_state.processed_files[file_id]['user_notes'] = st.session_state[notes_key]
 
 def display_pdf_action_section(mistral_api_key: str):
     """Displays the UI section for PDF classification and indexing for a selected PDF."""
@@ -32,9 +31,22 @@ def display_pdf_action_section(mistral_api_key: str):
         st.warning("Le fichier sélectionné n'est pas un PDF.")
         return
 
-    st.subheader(f"Classifier/Indexer: {file_details.get('filename', selected_file_id)}")
+    st.subheader(f"Classification/Indexation : {file_details.get('filename', selected_file_id)}")
     st.markdown("**Résumé du PDF (généré par IA):**")
     st.markdown(file_details.get('summary', "*Aucun résumé disponible.*"))
+
+    # --- Moved User Notes Text Area ---
+    current_notes = file_details.get('user_notes', '')
+    st.text_area(
+        "Notes additionnelles sur ce fichier",
+        value=current_notes,
+        key=f"user_notes_{selected_file_id}", # Unique key
+        placeholder="Ajoutez ici vos observations, questions spécifiques ou contexte sur ce fichier...",
+        height=150,
+        on_change=_update_user_notes_callback,
+        args=(selected_file_id,)
+    )
+    # -----------------------------------
 
     current_classification = file_details.get('classification')
 
@@ -56,6 +68,13 @@ def display_pdf_action_section(mistral_api_key: str):
         args=(selected_file_id,) # Pass file_id to callback
     )
 
+    # --- Ensure state reflects the current valid selection in the box ---
+    if selected_class != ui_components.PDF_CLASSES[0] and st.session_state.processed_files[selected_file_id].get('classification') is None:
+        st.session_state.processed_files[selected_file_id]['classification'] = selected_class
+        st.session_state.processed_files[selected_file_id]['status'] = 'classified'
+        # No need to reset 'indexed' here as it should be False if classification was None
+    # --------------------------------------------------------------------
+
     # Get the *current* classification from state for button logic
     classification_for_indexing = st.session_state.processed_files[selected_file_id].get('classification')
     is_indexed = st.session_state.processed_files[selected_file_id].get('indexed', False)
@@ -68,12 +87,22 @@ def display_pdf_action_section(mistral_api_key: str):
     with col1:
         if st.button(button_text, key=f"index_pdf_{selected_file_id}", disabled=disable_button, use_container_width=True):
              if classification_for_indexing and not is_indexed:
-                 index_pdf(
+                 # --- Indexing ---
+                 updated_details = index_pdf(
                      file_id=selected_file_id,
+                     file_details=file_details,
                      session_id=st.session_state.session_id,
                      mistral_api_key=mistral_api_key
                  )
-                 st.rerun()
+
+                 if updated_details:
+                     st.session_state.processed_files[selected_file_id] = updated_details
+                     if updated_details.get('status') == 'indexed':
+                         st.session_state.selected_file_id_for_action = None
+                     st.rerun()
+                 else:
+                     st.error(f"L'indexation a échoué de manière inattendue pour {selected_file_id}.")
+                     st.rerun()
              else:
                   st.warning(f"Impossible d'indexer : Classification manquante ou déjà indexé pour {selected_file_id}.")
     
@@ -89,28 +118,23 @@ def display_pdf_action_section(mistral_api_key: str):
 
 def _cleanup_single_file_resources(file_id: str, details: dict):
     """Attempts to clean up resources associated with a single file (temp files, DBs)."""
-    print(f"Attempting to cleanup resources for file_id: {file_id}")
     temp_path = details.get('temp_path')
 
     if temp_path and os.path.exists(temp_path):
         try:
             if os.path.isfile(temp_path):
                 os.remove(temp_path)
-                print(f"Removed temp file: {temp_path}")
                 temp_dir = os.path.dirname(temp_path)
                 if os.path.basename(temp_dir) == file_id:
                      try:
                          os.rmdir(temp_dir)
-                         print(f"Removed temp directory: {temp_dir}")
                          session_dir = os.path.dirname(temp_dir)
                          if not os.listdir(session_dir):
                              os.rmdir(session_dir)
-                             print(f"Removed empty session temp directory: {session_dir}")
                      except OSError as e:
-                         print(f"Could not remove directory {temp_dir} (maybe not empty or permissions?): {e}")
+                         st.warning(f"Could not remove directory {temp_dir} (maybe not empty or permissions?): {e}")
             elif os.path.isdir(temp_path): # Should not happen based on current logic, but check
                 shutil.rmtree(temp_path)
-                print(f"Removed temp directory (unexpectedly a dir): {temp_path}")
         except Exception as e:
             st.warning(f"Error removing temp resource {temp_path}: {e}")
 
@@ -121,25 +145,19 @@ def _cleanup_single_file_resources(file_id: str, details: dict):
             # DB path is expected to be a directory containing index files
             if os.path.isdir(db_path):
                 shutil.rmtree(db_path)
-                print(f"Removed vector DB directory: {db_path}")
                 class_dir = os.path.dirname(db_path)
                 try:
                     if not os.listdir(class_dir):
                         os.rmdir(class_dir)
-                        print(f"Removed empty classification DB directory: {class_dir}")
                 except OSError as e:
-                    print(f"Could not remove directory {class_dir} (maybe not empty or permissions?): {e}")
+                    st.warning(f"Could not remove directory {class_dir} (maybe not empty or permissions?): {e}")
             else:
-                 print(f"Warning: Expected DB path {db_path} to be a directory, but it is not.")
+                 st.warning(f"Expected DB path {db_path} to be a directory, but it is not.")
         except Exception as e:
             st.warning(f"Error removing vector DB {db_path}: {e}")
 
-    # Cleanup figures? (Currently figures_dir is session-wide, not per-file)
-    # If figures become per-file, add cleanup logic here.
-
 def _delete_file_callback(file_id_to_delete: str):
     """Callback function to handle file deletion."""
-    print(f"Delete button clicked for file_id: {file_id_to_delete}")
     if 'processed_files' in st.session_state and file_id_to_delete in st.session_state.processed_files:
         details = st.session_state.processed_files[file_id_to_delete]
         _cleanup_single_file_resources(file_id_to_delete, details)
@@ -184,7 +202,7 @@ def display_processed_files_sidebar():
                 'error_analysis': (st.error, "Erreur d'analyse IA"),
                 'error_validation': (st.error, "Erreur de validation CSV"),
                 'error_indexing': (st.error, "Erreur d'indexation"),
-                'error_indexing_missing_temp': (st.error, "Erreur Indexation (temp manquant)"),
+                'error_indexing_missing_temp': (st.error, "Erreur Indexation (Fichier temporaire manquant)"),
                 'unknown': (st.error, "Statut inconnu")
             }
             display_func, status_text = status_map.get(status, (st.error, f"Statut non géré: {status}"))
@@ -226,14 +244,11 @@ def display_processed_files_sidebar():
 def _select_pdf_for_action(file_id: str):
     """Sets the file_id for the PDF selected for classification/indexing."""
     st.session_state.selected_file_id_for_action = file_id
-    print(f"PDF selected for action: {file_id}")
 
 def _update_classification_callback(file_id: str):
     """Updates the classification for the selected PDF file in session state."""
     new_classification = st.session_state[f"pdf_classification_{file_id}"]
     current_details = st.session_state.processed_files[file_id]
-    
-    print(f"Updating classification for {file_id} to {new_classification}")
     
     if new_classification == ui_components.PDF_CLASSES[0]: # "Select Classification..."
         new_classification_value = None
@@ -250,7 +265,6 @@ def _update_classification_callback(file_id: str):
     if classification_changed:
         st.session_state.processed_files[file_id]['indexed'] = False
         st.session_state.processed_files[file_id]['db_path'] = None
-        print(f"Classification changed for {file_id}. Indexing status reset.")
 
 def build_manager_prompt(user_query, csv_args, pdf_context):
     """Builds the prompt for the manager agent based on context."""
@@ -298,25 +312,29 @@ def main():
         if not api_key_from_env:
             api_key = st.text_input("Clé API OpenAI", type="password")
         else:
-            st.success("Clé API OpenAI trouvée")
-            api_key = api_key_from_env
+            api_key = api_key_from_env # Assign the key regardless
+            # Show toast only once per session if the key is found
+            if not st.session_state.get('openai_key_toast_shown', False):
+                st.toast("Clé API OpenAI trouvée", icon="✅")
+                st.session_state.openai_key_toast_shown = True # Set the flag
             
         if not mistral_api_key_from_env:
              mistral_api_key = st.text_input("Clé API Mistral (pour PDF)", type="password")
         else:
-            st.success("Clé API Mistral trouvée")
-            mistral_api_key = mistral_api_key_from_env
+            mistral_api_key = mistral_api_key_from_env # Assign the key regardless
+            # Show toast only once per session if the key is found
+            if not st.session_state.get('mistral_key_toast_shown', False):
+                st.toast("Clé API Mistral trouvée", icon="✅")
+                st.session_state.mistral_key_toast_shown = True # Set the flag
 
         st.subheader("Chargement de Fichier")
         uploaded_file = st.file_uploader(
-            "Déposer un fichier (PDF, CSV, TXT)", 
-            type=['pdf', 'csv', 'txt'], 
+            "Charger un fichier (PDF, CSV, TXT)",
+            type=['pdf', 'csv', 'txt'],
             key="unified_uploader"
         )
 
-        user_notes = st.text_area("Notes additionnelles sur le fichier",
-                                  placeholder="Ajoutez ici vos observations, questions spécifiques ou contexte sur le fichier...",
-                                  height=150)
+
         # CSV specific option
         use_memory_limit = True
 
@@ -327,6 +345,9 @@ def main():
         st.session_state.session_id = str(uuid.uuid4())
         if 'processed_files' not in st.session_state:
             st.session_state.processed_files = {}
+    # Initialize chat history
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
     figures_dir = os.path.join('data', 'figures', st.session_state.session_id) # TODO: Should figures be per-file?
     os.makedirs(figures_dir, exist_ok=True)
@@ -352,7 +373,6 @@ def main():
             session_id=st.session_state.session_id,
             model=model,
             mistral_api_key=mistral_api_key,
-            user_notes=user_notes,
             use_memory_limit=use_memory_limit,
             figures_dir=figures_dir, # Pass figures dir (consider if per-file needed later)
         )
@@ -360,125 +380,70 @@ def main():
         if processed_file_info and 'file_id' in processed_file_info and 'details' in processed_file_info:
             file_id = processed_file_info['file_id']
             details = processed_file_info['details']
-            st.session_state.processed_files[file_id] = details
-            st.success(f"Fichier '{details.get('filename', 'Inconnu')}' traité et ajouté à la session.")
-            # No longer clearing uploader via flag
 
-            # --- Auto-select PDF for action if just uploaded --- 
-            if details.get('type') == 'pdf' and details.get('status') == 'awaiting_classification':
-                st.session_state.selected_file_id_for_action = file_id
-                print(f"Auto-selected newly uploaded PDF {file_id} for action.")
-                st.rerun()
-            # ----------------------------------------------------
+            # --- Clear chat history and add upload confirmation --- 
+            st.session_state.messages = [] # Clear previous chat
+            st.session_state.processed_files[file_id] = details
+
+            filename = details.get('filename', 'Inconnu')
+            file_type = details.get('type', 'unknown')
+            status = details.get('status', 'unknown')
+            # Use status mapping for user-friendly text (borrowed from sidebar logic)
+            status_map = {
+                'awaiting_classification': "en attente de classification",
+                'classified': "classifié, prêt pour indexation",
+                'indexing': "indexation en cours...",
+                'indexed': "indexé",
+                'ready': "prêt pour analyse",
+                'error_extraction': "erreur d'extraction de texte",
+                'error_analysis': "erreur d'analyse IA",
+                'error_validation': "erreur de validation CSV",
+                'error_indexing': "erreur d'indexation",
+                'error_indexing_missing_temp': "Erreur Indexation (Fichier temporaire manquant)",
+                'unknown': "statut inconnu"
+            }
+            status_text = status_map.get(status, f"statut non géré: {status}")
+
+            upload_message = f"Fichier '{filename}' ({file_type.upper()}) téléversé et traité. Statut: {status_text}."
+            if file_type == 'pdf' and status == 'awaiting_classification':
+                upload_message += " Cliquez sur 'Indexer' dans la barre latérale pour continuer."
+            elif file_type == 'csv' and status == 'ready':
+                 upload_message += " Vous pouvez maintenant poser des questions sur ses données."
+
+            st.session_state.messages.append({"role": "assistant", "content": upload_message})
+
+            st.success(f"Fichier '{filename}' traité et ajouté à la session. Le chat a été réinitialisé.")
+            st.rerun() # Rerun needed here to show cleared chat + new message
 
         elif processed_file_info:
             st.warning("Le traitement du fichier a terminé mais n'a pas pu être ajouté à l'état de la session.")
 
     # --- PDF Classification/Indexing UI (Conditional) ---
-    # TODO: Refactor this section significantly for multi-file
-    # Needs to be driven by selection from the sidebar, showing UI for one selected PDF
     display_pdf_action_section(mistral_api_key)
 
     # --- Display Processed Files & CSV Options --- 
     # Call the renamed and updated sidebar function
     display_processed_files_sidebar()
 
-    # --- User Query Input ---
-    user_query = st.text_input("Requête à envoyer à l'agent")
+    # --- Display Chat History ---
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-    # --- Main Execution Button ---
-    if st.button("Exécuter"):
-        if not api_key:
-            st.error("Veuillez entrer une clé API OpenAI valide.")
-            return
+    # --- Chat Input ---
+    if prompt := st.chat_input("Quel est votre question?"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-        if st.session_state.get('pdf_classification') and not st.session_state.get('pdf_indexed'):
-             if not mistral_api_key:
-                  st.error("Clé API Mistral requise pour l'indexation PDF.")
-                  return
-
-        chunk_size = None
-        if st.session_state.get('csv_args'):
-            use_memory_limit = st.session_state.csv_memory_limit_active
-            chunk_size = 100000 if use_memory_limit else None
-            if st.session_state.csv_args.get('chunk_size') != chunk_size:
-                 st.session_state.csv_args['chunk_size'] = chunk_size
-                 print(f"Updated chunk_size for active CSV to: {chunk_size}")
-
-        csv_args = st.session_state.get('csv_args')
-        pdf_indexed = st.session_state.get('pdf_indexed')
-
-        if not user_query and not csv_args and not pdf_indexed:
-             st.error("Veuillez entrer une requête ou fournir et traiter un fichier (PDF ou CSV).")
-             return
-
-        if not model:
-            st.error("Modèle OpenAI non initialisé. Vérifiez la clé API.")
-            return
-
-        os.environ["OPENAI_API_KEY"] = api_key
-        if mistral_api_key:
-            os.environ["MISTRAL_API_KEY"] = mistral_api_key
-
-        cleanup_resources(figures_dir)
-
-        search_agent = None
-        data_analyst = None
-        rag_agent = None
-
-        with st.spinner("Initialisation des agents..."):
-            search_agent = initialize_search_agent(model)
-            data_analyst = initialize_data_analyst_agent(model)
-            manager_agent = initialize_manager_agent(model)
-
-            if pdf_indexed and st.session_state.get('pdf_db_path'):
-                rag_agent = initialize_rag_agent(model, st.session_state.pdf_db_path)
-                if rag_agent:
-                    st.success("RAG Agent initialisé.")
-
-        if user_query or csv_args:
-            pdf_context = None
-            if pdf_indexed:
-                pdf_context = {
-                    "summary": st.session_state.get('pdf_summary'),
-                    "classification": st.session_state.get('pdf_classification'),
-                    "db_path": st.session_state.get('pdf_db_path'),
-                    "filename": st.session_state.get('pdf_filename'),
-                    "user_notes": user_notes
-                }
-
-            with st.spinner("L'agent traite votre requête..."):
-                manager_prompt = build_manager_prompt(user_query, csv_args, pdf_context)
-
-                manager_additional_args = {
-                    "search_agent": search_agent,
-                    "data_analyst": data_analyst,
-                    "rag_agent": rag_agent,
-                    "csv_args": csv_args,
-                    "pdf_context": pdf_context
-                }
-
-                try:
-                    result = manager_agent.run(
-                        manager_prompt,
-                        additional_args=manager_additional_args
-                    )
-                    st.subheader("Résultat de l'agent")
-                    st.markdown(result, unsafe_allow_html=True)
-
-                except Exception as e:
-                    st.error(f"Erreur lors de l'exécution du manager agent: {str(e)}")
-                    st.exception(e)
-
-            if st.session_state.get('csv_args') and os.path.exists(figures_dir) and os.listdir(figures_dir):
-                st.subheader("Figures générées (Analyse CSV)")
-                for fig_file in os.listdir(figures_dir):
-                    if fig_file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                        st.image(os.path.join(figures_dir, fig_file), caption=fig_file)
-                st.info("💡 Conseil: Vous pouvez demander à l'agent d'effectuer des analyses plus spécifiques sur vos données CSV.")
-
-        elif not user_query and pdf_indexed:
-             st.info("Le fichier PDF a été indexé. Entrez une requête pour interroger son contenu.")
+        # --- Agent Logic Placeholder ---
+        # This is where the agent execution logic will go later.
+        # For now, let's just acknowledge the input.
+        with st.chat_message("assistant"):
+            response = f"Received: '{prompt}'. Agent logic will be added here." # Placeholder
+            st.markdown(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        # We might need a st.rerun() here later depending on agent execution flow
 
 if __name__ == "__main__":
     main()
