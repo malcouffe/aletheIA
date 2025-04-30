@@ -11,29 +11,12 @@ import mimetypes
 # Define PDF_CLASSES here or pass it as an argument if preferred
 PDF_CLASSES = ['Select Classification...', 'finance policies', 'legal AML', 'general']
 
-def cleanup_resources(figures_dir):
-    """
-    Nettoie les ressources utilisées par les agents (figures).
-
-    Args:
-        figures_dir: Chemin vers le dossier contenant les figures générées.
-    """
-    if os.path.exists(figures_dir):
-        try:
-            shutil.rmtree(figures_dir)
-            os.makedirs(figures_dir, exist_ok=True)
-        except Exception as e:
-            st.warning(f"Impossible de nettoyer le dossier des figures: {e}")
-    else:
-        os.makedirs(figures_dir, exist_ok=True)
-
 def handle_uploaded_file(
     uploaded_file,
-    session_id: str, # Added session_id
+    session_id: str,
     model: OpenAIServerModel | None,
     mistral_api_key: str,
     use_memory_limit: bool,
-    figures_dir: str # Note: figures_dir might need rethinking (per-file?)
     ):
     """
     Detects the type of the uploaded file, processes it, and returns its details.
@@ -42,7 +25,7 @@ def handle_uploaded_file(
     Returns:
         dict | None: {'file_id': str, 'details': dict} on success, None on failure.
     """
-    # --- Check if this specific file object has already been processed --- 
+    # --- Check if this specific file object has already been processed ---
     if uploaded_file:
         # Use name, size, and internal file_id for a robust key against reruns
         current_file_key = f"{uploaded_file.name}_{uploaded_file.size}_{uploaded_file.file_id}"
@@ -74,30 +57,25 @@ def handle_uploaded_file(
          elif file_name.lower().endswith('.csv'): file_type = "csv"
          elif file_name.lower().endswith('.txt'): file_type = "txt"
 
-    details = None # Initialize details dictionary
+    details = None
 
     if file_type == "pdf":
         st.info(f"Fichier PDF '{file_name}' (ID: {file_id}) détecté. Traitement en cours...")
-        # Pass file_id and session_id
         details = _handle_pdf_logic(
             file_id=file_id,
             uploaded_file=uploaded_file,
             session_id=session_id,
             model=model,
-            mistral_api_key=mistral_api_key,
             use_memory_limit=use_memory_limit,
-            figures_dir=figures_dir
         )
     elif file_type == "csv":
         st.info(f"Fichier CSV '{file_name}' (ID: {file_id}) détecté. Traitement en cours...")
         chunk_size = 100000 if use_memory_limit else None
-        # Pass file_id and session_id
         details = _handle_csv_logic(
             file_id=file_id,
             uploaded_file=uploaded_file,
             session_id=session_id,
             use_memory_limit=use_memory_limit,
-            figures_dir=figures_dir, # Keep passing for now
             chunk_size=chunk_size
         )
     elif file_type == "txt":
@@ -110,7 +88,7 @@ def handle_uploaded_file(
 
     # If processing was successful, add common details and return structured dict
     if details:
-        details['file_id'] = file_id # Ensure file_id is in details
+        details['file_id'] = file_id
         details['filename'] = file_name
         details['type'] = file_type
 
@@ -123,13 +101,11 @@ def handle_uploaded_file(
         return None
 
 def _handle_pdf_logic(
-    file_id: str, # Added file_id
+    file_id: str,
     uploaded_file,
-    session_id: str, # Added session_id
+    session_id: str,
     model: OpenAIServerModel | None,
-    mistral_api_key: str, # Keep for now, although might be removed if model handles it
     use_memory_limit: bool,
-    figures_dir: str # Note: figures_dir might need rethinking (per-file?)
     ):
     """
     Internal logic to handle PDF processing (analysis, classification suggestion).
@@ -187,7 +163,7 @@ def _handle_pdf_logic(
                     pdf_details = {
                         'summary': summary,
                         'suggested_classification': suggested_class,
-                        'classification': None, # Initially unclassified
+                        'classification': None,
                         'temp_path': pdf_path,
                         'status': 'awaiting_classification',
                         'indexed': False,
@@ -197,7 +173,7 @@ def _handle_pdf_logic(
 
                 except Exception as llm_error:
                     st.error(f"Erreur lors de la communication avec l'IA : {llm_error}")
-                    return None # Indicate failure
+                    return None
         else:
             st.warning("Aucun texte n'a pu être extrait du PDF.")
             # Return minimal info indicating failure to extract text but file exists
@@ -205,12 +181,11 @@ def _handle_pdf_logic(
 
     except Exception as e:
         st.error(f"Erreur lors de la préparation du PDF : {str(e)}")
-        # Clean up temp dir if creation failed partially? Maybe not needed if os.makedirs handles it.
         # Ensure temp dir is removed if it exists but processing failed fundamentally
         if os.path.exists(pdf_temp_dir):
              try: shutil.rmtree(pdf_temp_dir)
              except Exception as rm_err: print(f"Error cleaning up failed PDF temp dir {pdf_temp_dir}: {rm_err}")
-        return None # Indicate failure
+        return None
 
 def index_pdf(file_id: str, file_details: dict, session_id: str, mistral_api_key: str) -> dict | None:
      """
@@ -234,7 +209,8 @@ def index_pdf(file_id: str, file_details: dict, session_id: str, mistral_api_key
      if updated_details.get('status') != 'awaiting_classification' and updated_details.get('status') != 'classified':
           st.warning(f"Cannot index PDF '{updated_details.get('filename')}'. Status is '{updated_details.get('status')}'.")
           # Return None or original details? Let's return original details to signify no state change attempted.
-          return updated_details # Or return None? Returning details seems better.
+          # Or return None? Returning details seems better.
+          return updated_details
      if updated_details.get('indexed'):
          st.warning(f"PDF '{updated_details.get('filename')}' is already indexed.")
          return updated_details
@@ -249,7 +225,6 @@ def index_pdf(file_id: str, file_details: dict, session_id: str, mistral_api_key
      pdf_temp_path = updated_details.get('temp_path')
      if not pdf_temp_path or not os.path.exists(pdf_temp_path):
          st.error(f"Erreur : Chemin du fichier PDF temporaire '{pdf_temp_path}' introuvable pour l'indexation du fichier ID '{file_id}'.")
-         # Update status to reflect error
          updated_details.update({
              'indexed': False,
              'db_path': None,
@@ -268,18 +243,17 @@ def index_pdf(file_id: str, file_details: dict, session_id: str, mistral_api_key
              # Create DB path incorporating session_id and file_id for uniqueness
              base_db_dir = os.path.join("data", "output", "vectordb", classification)
              db_path = os.path.join(base_db_dir, f"session_{session_id}_file_{file_id}")
-             os.makedirs(os.path.dirname(db_path), exist_ok=True) # Ensure parent dir exists
+             os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
              print(f"Indexing PDF. File ID: {file_id}, Temp Path: {pdf_temp_path}, DB path: {db_path}")
              # Assuming analyser_pdf takes path and db_path
-             analysis_summary = analyser_pdf(pdf_temp_path, db_path=db_path, exporter=False) # Assuming this returns something useful? Currently ignored.
+             analyser_pdf(pdf_temp_path, db_path=db_path, exporter=False)
 
-             # Prepare updated details on success
              updated_details.update({
                  'db_path': db_path,
                  'indexed': True,
                  'status': 'indexed',
-                 'temp_path': None # Clear temp path after successful indexing and removal
+                 'temp_path': None
              })
              st.success(f"PDF '{filename}' (ID: {file_id}) indexé avec succès dans la catégorie '{classification}'.")
 
@@ -290,29 +264,24 @@ def index_pdf(file_id: str, file_details: dict, session_id: str, mistral_api_key
                      print(f"Removed temporary PDF: {pdf_temp_path}")
              except Exception as cleanup_error:
                  st.warning(f"Could not remove temporary PDF file '{pdf_temp_path}': {cleanup_error}")
-                 # Keep temp_path in details if removal failed? Or set to None anyway? Let's set to None.
-                 # updated_details['temp_path'] = pdf_temp_path # Keep if needed
              # ---------------------------
 
-             return updated_details # Return the updated details dictionary
+             return updated_details
 
      except Exception as index_error:
          st.error(f"Erreur lors de l'indexation du PDF '{filename}' (ID: {file_id}): {index_error}")
-         # Update status to reflect error, clear db_path/indexed status
          updated_details.update({
              'indexed': False,
              'db_path': None,
              'status': 'error_indexing'
-             # Keep classification, summary, temp_path (might be needed for retry?)
          })
-         return updated_details # Return the updated details dictionary with error status
+         return updated_details
 
 def _handle_csv_logic(
-    file_id: str, # Added file_id
+    file_id: str,
     uploaded_file,
-    session_id: str, # Added session_id
+    session_id: str,
     use_memory_limit: bool,
-    figures_dir: str, # Keep passing for now
     chunk_size: int | None
     ):
     """
@@ -321,7 +290,7 @@ def _handle_csv_logic(
     Does NOT set session state.
     """
     csv_args = None
-    csv_file_path = None # Keep track for potential cleanup
+    csv_file_path = None
 
     try:
         # Create specific temp directory using session_id and file_id
@@ -345,18 +314,16 @@ def _handle_csv_logic(
             f.write(file_content)
 
         csv_processor = CSVProcessor()
-        # Pass path for validation
         is_valid, validation_message = csv_processor.validate_csv(csv_file_path, auto_detect=True)
 
         if not is_valid:
             st.error(f"Le fichier CSV '{original_filename}' (ID: {file_id}) n'est pas valide: {validation_message}")
             if os.path.exists(csv_file_path):
-                try: os.remove(csv_file_path) # Clean up invalid file
+                try: os.remove(csv_file_path)
                 except Exception as rm_err: print(f"Error removing invalid CSV {csv_file_path}: {rm_err}")
-            # Clean up the temp dir as well if file was the only thing in it
             try: os.rmdir(csv_temp_dir)
             except Exception as rmdir_err: print(f"Error removing empty temp dir {csv_temp_dir}: {rmdir_err}")
-            return None # Stop
+            return None
 
         separator = csv_processor.separator
         encoding = csv_processor.encoding
@@ -370,6 +337,10 @@ def _handle_csv_logic(
             memory_warning = "⚠️ Le fichier est relativement volumineux. L'option de limitation de mémoire est recommandée."
             # Note: The checkbox state is managed in app.py, this is just informational
 
+        # Define the per-file figures directory
+        figures_dir = os.path.join('data', 'figures', session_id, file_id)
+        os.makedirs(figures_dir, exist_ok=True)
+
         # Update path in notes
         data_analyst_notes = f"""
 # Guide d'analyse de données
@@ -377,7 +348,7 @@ def _handle_csv_logic(
 - File ID: {file_id}
 - Chemin: {csv_file_path}
 - Séparateur: '{separator}'
-- Dossier pour figures: '{figures_dir}' # Revisit if figures should be per-file
+- Dossier pour figures: '{figures_dir}'
 - Taille du fichier: {file_size_mb:.2f} MB
 - Nombre de lignes: {rows}
 - Nombre de colonnes: {len(columns)}
@@ -398,23 +369,22 @@ def _handle_csv_logic(
             "separator": separator,
             "additional_notes": data_analyst_notes,
             "figures_dir": figures_dir,
-            "chunk_size": chunk_size # Use calculated chunk_size
-            # Add more analysis results if needed
+            "chunk_size": chunk_size
         }
 
         info_message = f"Fichier CSV '{original_filename}' validé avec séparateur '{separator}'. Prêt pour l'analyse."
         if memory_warning:
             info_message += f" {memory_warning}"
-        st.success(info_message) # Use success message
+        st.success(info_message)
 
         # Return details
         csv_details = {
             'csv_args': csv_args,
-            'temp_path': csv_file_path, # Path to the saved CSV
+            'temp_path': csv_file_path,
             'status': 'ready',
-            'columns': columns, # Store columns info
-            'rows': rows, # Store row count
-            'size_mb': file_size_mb # Store size
+            'columns': columns,
+            'rows': rows,
+            'size_mb': file_size_mb
         }
         return csv_details
 
@@ -427,4 +397,4 @@ def _handle_csv_logic(
         if 'csv_temp_dir' in locals() and os.path.exists(csv_temp_dir):
              try: shutil.rmtree(csv_temp_dir)
              except Exception as rmdir_err: print(f"Error removing temp dir {csv_temp_dir} on error: {rmdir_err}")
-        return None # Indicate failure
+        return None
