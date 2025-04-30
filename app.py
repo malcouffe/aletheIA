@@ -3,11 +3,97 @@ import os
 import shutil
 import uuid
 import torch
+import json
 from smolagents import OpenAIServerModel
 from ui_components import handle_uploaded_file, index_pdf
 import ui_components
 
 torch.classes.__path__ = []
+
+# --- Persistence Constants ---
+PERSISTENCE_DIR = os.path.join("data", "session_persistence")
+PERSISTENCE_FILE = os.path.join(PERSISTENCE_DIR, "persistent_session_state.json")
+
+# --- Persistence Functions ---
+def save_persistent_state(processed_files_dict):
+    """Saves the processed_files dictionary to a JSON file."""
+    try:
+        os.makedirs(PERSISTENCE_DIR, exist_ok=True)
+        with open(PERSISTENCE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(processed_files_dict, f, indent=4)
+        print(f"Session state successfully saved to {PERSISTENCE_FILE}") # Optional: for debugging
+    except Exception as e:
+        st.error(f"Failed to save session state: {e}")
+
+def load_persistent_state():
+    """Loads and validates the processed_files dictionary from a JSON file."""
+    if not os.path.exists(PERSISTENCE_FILE):
+        print("Persistence file not found. Starting with empty state.") # Optional: for debugging
+        return {}
+
+    try:
+        with open(PERSISTENCE_FILE, 'r', encoding='utf-8') as f:
+            loaded_data = json.load(f)
+    except json.JSONDecodeError:
+        st.error("Failed to load session state: Invalid JSON format. Starting fresh.")
+        # Optionally back up the corrupted file
+        try:
+            corrupted_backup_path = PERSISTENCE_FILE + ".corrupted"
+            shutil.copy(PERSISTENCE_FILE, corrupted_backup_path)
+            st.warning(f"Corrupted state file backed up to {corrupted_backup_path}")
+        except Exception as backup_e:
+             st.warning(f"Could not back up corrupted state file: {backup_e}")
+        return {}
+    except Exception as e:
+        st.error(f"Failed to load session state: {e}. Starting fresh.")
+        return {}
+
+    validated_data = {}
+    for file_id, details in loaded_data.items():
+        # --- Validation Logic ---
+        is_valid = True
+        file_type = details.get('type')
+        filename = details.get('filename', f"ID: {file_id}") # For logging
+
+        if file_type == 'pdf':
+            # If indexed, db_path MUST exist
+            if details.get('indexed') and not os.path.exists(str(details.get('db_path'))):
+                print(f"Validation failed for {filename}: Indexed PDF's db_path '{details.get('db_path')}' not found. Discarding.")
+                is_valid = False
+            # If not indexed, temp_path might exist (though usually cleaned up after indexing)
+            # Allow entries awaiting classification even if temp path is missing (might be error state)
+            # Allow indexed entries even if temp_path is missing (expected)
+            # But if it's supposed to have a temp path and doesn't, that's an issue.
+            elif details.get('status') == 'awaiting_classification' and 'temp_path' in details and not os.path.exists(str(details.get('temp_path'))):
+                 print(f"Validation failed for {filename}: PDF awaiting classification's temp_path '{details.get('temp_path')}' not found. Discarding.")
+                 # Let's keep error states even if path is missing
+                 # is_valid = False # Re-evaluate if we should keep error states
+
+        elif file_type == 'csv':
+            # CSV needs its source file if it's in 'ready' state
+            csv_args = details.get('csv_args', {})
+            source_file = csv_args.get('source_file')
+            if details.get('status') == 'ready' and (not source_file or not os.path.exists(str(source_file))):
+                print(f"Validation failed for {filename}: CSV's source_file '{source_file}' not found. Discarding.")
+                is_valid = False
+            # Also check figures dir existence? Maybe less critical.
+            figures_dir = csv_args.get('figures_dir')
+            if figures_dir and not os.path.exists(str(figures_dir)):
+                 print(f"Note for {filename}: CSV's figures_dir '{figures_dir}' not found. May need regeneration.")
+                 # Don't invalidate just for figures dir
+
+        # Add other file types' validation if needed
+
+        if is_valid:
+            validated_data[file_id] = details
+        else:
+            # If invalid, attempt cleanup of associated resources like dangling DB/figure dirs
+            # Call the existing cleanup function, it handles non-existent paths gracefully
+             _cleanup_single_file_resources(file_id, details)
+
+
+    print(f"Loaded {len(validated_data)} valid entries from state file.") # Optional: debugging
+    return validated_data
 
 # --- Callback to update user notes ---
 def _update_user_notes_callback(file_id: str):
@@ -15,6 +101,8 @@ def _update_user_notes_callback(file_id: str):
     notes_key = f"user_notes_{file_id}"
     if notes_key in st.session_state:
         st.session_state.processed_files[file_id]['user_notes'] = st.session_state[notes_key]
+        # Save state after updating notes
+        save_persistent_state(st.session_state.processed_files)
 
 def display_pdf_action_section(mistral_api_key: str):
     """Displays the UI section for PDF classification and indexing for a selected PDF."""
@@ -72,7 +160,6 @@ def display_pdf_action_section(mistral_api_key: str):
     if selected_class != ui_components.PDF_CLASSES[0] and st.session_state.processed_files[selected_file_id].get('classification') is None:
         st.session_state.processed_files[selected_file_id]['classification'] = selected_class
         st.session_state.processed_files[selected_file_id]['status'] = 'classified'
-        # No need to reset 'indexed' here as it should be False if classification was None
     # --------------------------------------------------------------------
 
     # Get the *current* classification from state for button logic
@@ -97,6 +184,8 @@ def display_pdf_action_section(mistral_api_key: str):
 
                  if updated_details:
                      st.session_state.processed_files[selected_file_id] = updated_details
+                     # Save state after successful indexing
+                     save_persistent_state(st.session_state.processed_files)
                      if updated_details.get('status') == 'indexed':
                          st.session_state.selected_file_id_for_action = None
                      st.rerun()
@@ -117,7 +206,7 @@ def display_pdf_action_section(mistral_api_key: str):
 # --- Functions for Multi-File Handling ---
 
 def _cleanup_single_file_resources(file_id: str, details: dict):
-    """Attempts to clean up resources associated with a single file (temp files, DBs)."""
+    """Attempts to clean up resources associated with a single file (temp files, DBs, figures)."""
     temp_path = details.get('temp_path')
 
     if temp_path and os.path.exists(temp_path):
@@ -156,12 +245,34 @@ def _cleanup_single_file_resources(file_id: str, details: dict):
         except Exception as e:
             st.warning(f"Error removing vector DB {db_path}: {e}")
 
+    # --- Cleanup Figures Directory --- 
+    try:
+        session_id = st.session_state.session_id # Assuming session_id is accessible
+        figures_dir = os.path.join('data', 'figures', session_id, file_id)
+        if os.path.exists(figures_dir) and os.path.isdir(figures_dir):
+            shutil.rmtree(figures_dir)
+            print(f"Removed figures directory: {figures_dir}")
+            # Optionally, try removing session dir if empty (like temp dir logic)
+            session_figures_dir = os.path.dirname(figures_dir)
+            try:
+                if not os.listdir(session_figures_dir):
+                    os.rmdir(session_figures_dir)
+            except OSError as e:
+                 st.warning(f"Could not remove session figures directory {session_figures_dir} (maybe not empty or permissions?): {e}")
+    except AttributeError:
+         st.warning(f"Could not clean up figures for {file_id}: session_id not found in st.session_state.")
+    except Exception as e:
+        st.warning(f"Error removing figures directory for {file_id}: {e}")
+    # ---------------------------------
+
 def _delete_file_callback(file_id_to_delete: str):
     """Callback function to handle file deletion."""
     if 'processed_files' in st.session_state and file_id_to_delete in st.session_state.processed_files:
         details = st.session_state.processed_files[file_id_to_delete]
         _cleanup_single_file_resources(file_id_to_delete, details)
         del st.session_state.processed_files[file_id_to_delete]
+        # Save state after deletion
+        save_persistent_state(st.session_state.processed_files)
         st.success(f"Fichier '{details.get('filename', file_id_to_delete)}' supprimé.")
         st.rerun()
     else:
@@ -266,6 +377,9 @@ def _update_classification_callback(file_id: str):
         st.session_state.processed_files[file_id]['indexed'] = False
         st.session_state.processed_files[file_id]['db_path'] = None
 
+    # Add save state call here
+    save_persistent_state(st.session_state.processed_files)
+
 def build_manager_prompt(user_query, csv_args, pdf_context):
     """Builds the prompt for the manager agent based on context."""
     # TODO: This needs significant update for multi-file context
@@ -299,8 +413,19 @@ def build_manager_prompt(user_query, csv_args, pdf_context):
 
 def main():
 
-    st.title("Agent Web avec Streamlit")
-    st.write("Entrez votre clé API OpenAI et votre requête pour interroger l'agent.")
+    st.title("Assistant d'Analyse de Documents (PDF/CSV)")
+    st.write("Chargez un fichier PDF ou CSV, ou configurez vos clés API dans la barre latérale pour commencer.")
+
+    # --- Initialize session state ---
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
+        # Initialize processed_files: Load from persistent storage OR start empty
+        if 'processed_files' not in st.session_state:
+             st.session_state.processed_files = load_persistent_state()
+
+    # Initialize chat history (remains session-specific)
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
     # --- Configuration de la Sidebar ---
     with st.sidebar:
@@ -341,17 +466,6 @@ def main():
     # -------------------------------------
 
     # --- Interface Principale ---
-    if 'session_id' not in st.session_state:
-        st.session_state.session_id = str(uuid.uuid4())
-        if 'processed_files' not in st.session_state:
-            st.session_state.processed_files = {}
-    # Initialize chat history
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    figures_dir = os.path.join('data', 'figures', st.session_state.session_id) # TODO: Should figures be per-file?
-    os.makedirs(figures_dir, exist_ok=True)
-
     model = None
     if api_key:
         try:
@@ -366,24 +480,23 @@ def main():
     # --- File Upload Handling (using functions from ui_components) ---
     # Call the unified file handler if a file was uploaded
     if uploaded_file is not None:
-        temp_chunk_size = 100000 if use_memory_limit else None # Keep this logic? Or handle in handler?
-
         processed_file_info = handle_uploaded_file(
             uploaded_file=uploaded_file,
             session_id=st.session_state.session_id,
             model=model,
             mistral_api_key=mistral_api_key,
             use_memory_limit=use_memory_limit,
-            figures_dir=figures_dir, # Pass figures dir (consider if per-file needed later)
         )
 
         if processed_file_info and 'file_id' in processed_file_info and 'details' in processed_file_info:
             file_id = processed_file_info['file_id']
             details = processed_file_info['details']
 
-            # --- Clear chat history and add upload confirmation --- 
+            # --- Clear chat history and add upload confirmation ---
             st.session_state.messages = [] # Clear previous chat
             st.session_state.processed_files[file_id] = details
+            # Save state after adding a new file
+            save_persistent_state(st.session_state.processed_files)
 
             filename = details.get('filename', 'Inconnu')
             file_type = details.get('type', 'unknown')
