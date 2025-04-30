@@ -21,14 +21,12 @@ def save_persistent_state(processed_files_dict):
         os.makedirs(PERSISTENCE_DIR, exist_ok=True)
         with open(PERSISTENCE_FILE, 'w', encoding='utf-8') as f:
             json.dump(processed_files_dict, f, indent=4)
-        print(f"Session state successfully saved to {PERSISTENCE_FILE}") # Optional: for debugging
     except Exception as e:
         st.error(f"Failed to save session state: {e}")
 
 def load_persistent_state():
     """Loads and validates the processed_files dictionary from a JSON file."""
     if not os.path.exists(PERSISTENCE_FILE):
-        print("Persistence file not found. Starting with empty state.") # Optional: for debugging
         return {}
 
     try:
@@ -58,29 +56,24 @@ def load_persistent_state():
         if file_type == 'pdf':
             # If indexed, db_path MUST exist
             if details.get('indexed') and not os.path.exists(str(details.get('db_path'))):
-                print(f"Validation failed for {filename}: Indexed PDF's db_path '{details.get('db_path')}' not found. Discarding.")
                 is_valid = False
             # If not indexed, temp_path might exist (though usually cleaned up after indexing)
             # Allow entries awaiting classification even if temp path is missing (might be error state)
             # Allow indexed entries even if temp_path is missing (expected)
             # But if it's supposed to have a temp path and doesn't, that's an issue.
             elif details.get('status') == 'awaiting_classification' and 'temp_path' in details and not os.path.exists(str(details.get('temp_path'))):
-                 print(f"Validation failed for {filename}: PDF awaiting classification's temp_path '{details.get('temp_path')}' not found. Discarding.")
-                 # Let's keep error states even if path is missing
-                 # is_valid = False # Re-evaluate if we should keep error states
+                 is_valid = False # Marked as invalid if temp path is missing when needed
 
         elif file_type == 'csv':
             # CSV needs its source file if it's in 'ready' state
             csv_args = details.get('csv_args', {})
             source_file = csv_args.get('source_file')
             if details.get('status') == 'ready' and (not source_file or not os.path.exists(str(source_file))):
-                print(f"Validation failed for {filename}: CSV's source_file '{source_file}' not found. Discarding.")
                 is_valid = False
             # Also check figures dir existence? Maybe less critical.
             figures_dir = csv_args.get('figures_dir')
             if figures_dir and not os.path.exists(str(figures_dir)):
-                 print(f"Note for {filename}: CSV's figures_dir '{figures_dir}' not found. May need regeneration.")
-                 # Don't invalidate just for figures dir
+                 pass # Don't invalidate just for figures dir
 
         # Add other file types' validation if needed
 
@@ -91,8 +84,6 @@ def load_persistent_state():
             # Call the existing cleanup function, it handles non-existent paths gracefully
              _cleanup_single_file_resources(file_id, details)
 
-
-    print(f"Loaded {len(validated_data)} valid entries from state file.") # Optional: debugging
     return validated_data
 
 # --- Callback to update user notes ---
@@ -123,7 +114,6 @@ def display_pdf_action_section(mistral_api_key: str):
     st.markdown("**Résumé du PDF (généré par IA):**")
     st.markdown(file_details.get('summary', "*Aucun résumé disponible.*"))
 
-    # --- Moved User Notes Text Area ---
     current_notes = file_details.get('user_notes', '')
     st.text_area(
         "Notes additionnelles sur ce fichier",
@@ -134,7 +124,6 @@ def display_pdf_action_section(mistral_api_key: str):
         on_change=_update_user_notes_callback,
         args=(selected_file_id,)
     )
-    # -----------------------------------
 
     current_classification = file_details.get('classification')
 
@@ -195,12 +184,10 @@ def display_pdf_action_section(mistral_api_key: str):
              else:
                   st.warning(f"Impossible d'indexer : Classification manquante ou déjà indexé pour {selected_file_id}.")
     
-    # Add a button to close/deselect this section
     with col2:
         if st.button("Terminer", key=f"close_indexing_{selected_file_id}", type="secondary", use_container_width=True):
             st.session_state.selected_file_id_for_action = None
-            st.rerun()
-            
+    
     st.divider()
 
 # --- Functions for Multi-File Handling ---
@@ -459,8 +446,6 @@ def main():
             key="unified_uploader"
         )
 
-
-        # CSV specific option
         use_memory_limit = True
 
     # -------------------------------------
@@ -478,7 +463,6 @@ def main():
             st.warning(f"Impossible d'initialiser le modèle OpenAI : {e}")
 
     # --- File Upload Handling (using functions from ui_components) ---
-    # Call the unified file handler if a file was uploaded
     if uploaded_file is not None:
         processed_file_info = handle_uploaded_file(
             uploaded_file=uploaded_file,
@@ -553,7 +537,7 @@ def main():
         # This is where the agent execution logic will go later.
         # For now, let's just acknowledge the input.
         with st.chat_message("assistant"):
-            response = f"Received: '{prompt}'. Agent logic will be added here." # Placeholder
+            response = f"Received: '{prompt}'. Agent logic will be added here."
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         # We might need a st.rerun() here later depending on agent execution flow
