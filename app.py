@@ -168,7 +168,7 @@ def display_pdf_action_section(mistral_api_key: str):
 
     # Indexing Button
     disable_button = not classification_for_indexing or is_indexed
-    button_text = "Indexer le PDF" if not is_indexed else "PDF Déjà Indexé"
+    button_text = "Indexer le fichier" if not is_indexed else "Fichier déjà indexé"
 
     col1, col2 = st.columns(2)
     with col1:
@@ -197,7 +197,7 @@ def display_pdf_action_section(mistral_api_key: str):
     
     # Add a button to close/deselect this section
     with col2:
-        if st.button("Terminer", key=f"close_indexing_{selected_file_id}", type="secondary", use_container_width=True):
+        if st.button("Sortir", key=f"close_indexing_{selected_file_id}", type="secondary", use_container_width=True):
             st.session_state.selected_file_id_for_action = None
             st.rerun()
             
@@ -283,7 +283,7 @@ def display_processed_files_sidebar():
     """Displays the list of processed files and their status in the sidebar."""
     with st.sidebar:
         st.divider()
-        st.subheader("Fichiers Traités")
+        st.subheader("Liste de fichiers")
 
         processed_files = st.session_state.get('processed_files', {})
 
@@ -313,7 +313,7 @@ def display_processed_files_sidebar():
                 'error_analysis': (st.error, "Erreur d'analyse IA"),
                 'error_validation': (st.error, "Erreur de validation CSV"),
                 'error_indexing': (st.error, "Erreur d'indexation"),
-                'error_indexing_missing_temp': (st.error, "Erreur Indexation (Fichier temporaire manquant)"),
+                'error_indexing_missing_temp': (st.error, "Erreur d'indexation (fichier temporaire manquant)"),
                 'unknown': (st.error, "Statut inconnu")
             }
             display_func, status_text = status_map.get(status, (st.error, f"Statut non géré: {status}"))

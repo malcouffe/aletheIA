@@ -9,7 +9,7 @@ from smolagents import OpenAIServerModel
 import mimetypes
 
 # Define PDF_CLASSES here or pass it as an argument if preferred
-PDF_CLASSES = ['Select Classification...', 'finance policies', 'legal AML', 'general']
+PDF_CLASSES = ['Select classification...', 'Tokenisation', 'AML-CFT', 'General']
 
 def handle_uploaded_file(
     uploaded_file,
@@ -255,7 +255,7 @@ def index_pdf(file_id: str, file_details: dict, session_id: str, mistral_api_key
                  'status': 'indexed',
                  'temp_path': None
              })
-             st.success(f"PDF '{filename}' (ID: {file_id}) indexé avec succès dans la catégorie '{classification}'.")
+             st.success(f"Fichier '{filename}' (ID: {file_id}) indexé avec succès dans la catégorie '{classification}'.")
 
              # --- Cleanup Temporary PDF ---
              try:
