@@ -7,6 +7,12 @@ import json
 from smolagents import OpenAIServerModel
 from ui_components import handle_uploaded_file, index_pdf
 import ui_components
+from agent_utils import (
+    initialize_search_agent,
+    initialize_manager_agent,
+    initialize_rag_agent,
+    initialize_data_analyst_agent
+)
 
 torch.classes.__path__ = []
 
@@ -412,7 +418,6 @@ def build_manager_prompt(user_query, csv_args, pdf_context):
     """
 
 def main():
-
     st.title("Assistant d'Analyse de Documents (PDF/CSV)")
     st.write("Chargez un fichier PDF ou CSV, ou configurez vos clés API dans la barre latérale pour commencer.")
 
@@ -427,6 +432,10 @@ def main():
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
+    # Initialize agents state
+    if "agents" not in st.session_state:
+        st.session_state.agents = {}
+
     # --- Configuration de la Sidebar ---
     with st.sidebar:
         st.header("Configuration")
@@ -437,11 +446,10 @@ def main():
         if not api_key_from_env:
             api_key = st.text_input("Clé API OpenAI", type="password")
         else:
-            api_key = api_key_from_env # Assign the key regardless
-            # Show toast only once per session if the key is found
+            api_key = api_key_from_env
             if not st.session_state.get('openai_key_toast_shown', False):
                 st.toast("Clé API OpenAI trouvée", icon="✅")
-                st.session_state.openai_key_toast_shown = True # Set the flag
+                st.session_state.openai_key_toast_shown = True
             
         if not mistral_api_key_from_env:
              mistral_api_key = st.text_input("Clé API Mistral (pour PDF)", type="password")
@@ -465,17 +473,56 @@ def main():
 
     # -------------------------------------
 
-    # --- Interface Principale ---
+    # --- Interface principale ---
     model = None
     if api_key:
         try:
             model = OpenAIServerModel(
-                model_id="gpt-4o",
+                model_id="gpt-3.5-turbo",
                 api_base="https://api.openai.com/v1",
                 api_key=api_key,
             )
+            # Initialiser les agents au démarrage
+            print("Initialisation des agents...")
+            
+            # Initialise les agents de base si le modèle est prêt et qu'ils n'existent pas encore
+            if not st.session_state.agents.get("search_agent"):
+                print("Initialisation de search_agent")
+                st.session_state.agents["search_agent"] = initialize_search_agent(model)
+                
+            if not st.session_state.agents.get("manager_agent"):
+                print("Initialisation de manager_agent")
+                st.session_state.agents["manager_agent"] = initialize_manager_agent(model)
+                
+            # Vérifier/initialiser les autres agents si nécessaire
+            # Vérifier les PDFs déjà indexés pour initialiser le RAG agent
+            for file_id, details in st.session_state.processed_files.items():
+                if details.get('type') == 'pdf' and details.get('indexed', False):
+                    if not st.session_state.agents.get("rag_agent"):
+                        print(f"Initialisation de rag_agent avec db_path: {details.get('db_path')}")
+                        rag_agent = initialize_rag_agent(model, details['db_path'])
+                        if rag_agent:
+                            st.session_state.agents["rag_agent"] = rag_agent
+                            print("Agent RAG initialisé avec succès")
+                        else:
+                            print("Échec de l'initialisation de l'agent RAG")
+                    break
+                    
+            # Initialiser l'agent d'analyse de données si des CSV sont chargés
+            for file_id, details in st.session_state.processed_files.items():
+                if details.get('type') == 'csv' and details.get('status') == 'ready':
+                    if not st.session_state.agents.get("data_analyst"):
+                        print("Initialisation de data_analyst")
+                        st.session_state.agents["data_analyst"] = initialize_data_analyst_agent(model)
+                        print("Agent Data Analyst initialisé")
+                    break
+                    
+            # Afficher les agents disponibles pour le débogage
+            print(f"Agents disponibles après initialisation: {list(st.session_state.agents.keys())}")
+            
         except Exception as e:
             st.warning(f"Impossible d'initialiser le modèle OpenAI : {e}")
+            print(f"Erreur lors de l'initialisation du modèle: {e}")
 
     # --- File Upload Handling (using functions from ui_components) ---
     # Call the unified file handler if a file was uploaded
@@ -549,14 +596,151 @@ def main():
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # --- Agent Logic Placeholder ---
-        # This is where the agent execution logic will go later.
-        # For now, let's just acknowledge the input.
+        # --- Agent Logic ---
         with st.chat_message("assistant"):
-            response = f"Received: '{prompt}'. Agent logic will be added here." # Placeholder
-            st.markdown(response)
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        # We might need a st.rerun() here later depending on agent execution flow
+            # Placer l'expander en premier, avant tout autre contenu
+            with st.expander("🔄 Statut du traitement", expanded=False):
+                status_placeholder = st.empty()
+            
+            # Message placeholder pour la réponse finale
+            message_placeholder = st.empty()
+            
+            try:
+                # Message initial
+                status_placeholder.markdown("_Début de l'analyse..._")
+                
+                # Prépare le contexte des fichiers
+                pdf_context = None
+                csv_args = None
+                
+                # Vérifier si un PDF est indexé
+                status_placeholder.markdown("_Recherche de documents disponibles..._")
+                for file_id, details in st.session_state.processed_files.items():
+                    if details.get('type') == 'pdf' and details.get('indexed', False):
+                        if "rag_agent" not in st.session_state.agents:
+                            status_placeholder.markdown("_Initialisation de l'agent RAG..._")
+                            db_path = details.get('db_path')
+                            status_placeholder.markdown(f"_Utilisation de la base de données: {db_path}_")
+                            print(f"Detailed RAG Agent initialization debug:")
+                            print(f"File ID: {file_id}")
+                            print(f"DB Path: {db_path}")
+                            print(f"DB Path exists: {os.path.exists(db_path) if db_path else False}")
+                            print(f"DB Path contents: {os.listdir(db_path) if db_path and os.path.exists(db_path) else 'N/A'}")
+                            
+                            rag_agent = initialize_rag_agent(model, db_path)
+                            if rag_agent:
+                                st.session_state.agents["rag_agent"] = rag_agent
+                                status_placeholder.markdown("_Agent RAG initialisé_")
+                            else:
+                                status_placeholder.markdown("_❌ Échec de l'initialisation de l'agent RAG_")
+                        
+                        pdf_context = {
+                            "file_id": file_id,
+                            "filename": details.get('filename'),
+                            "db_path": details.get('db_path')
+                        }
+                        status_placeholder.markdown(f"_Document trouvé : {details.get('filename')}_")
+                        break
+                
+                # Vérifie si un CSV est chargé
+                for file_id, details in st.session_state.processed_files.items():
+                    if details.get('type') == 'csv' and details.get('status') == 'ready':
+                        if "data_analyst" not in st.session_state.agents:
+                            status_placeholder.markdown("_Initialisation de l'agent d'analyse..._")
+                            st.session_state.agents["data_analyst"] = initialize_data_analyst_agent(model)
+                            status_placeholder.markdown("_Agent d'analyse initialisé_")
+                        
+                        csv_args = details.get('csv_args')
+                        status_placeholder.markdown(f"_Fichier CSV trouvé : {details.get('filename')}_")
+                        break
+
+                # Créez un dictionnaire de contexte pour tous les agents et ressources
+                status_placeholder.markdown("_Préparation du contexte..._")
+                context = {
+                    "search_agent": st.session_state.agents.get("search_agent"),
+                    "data_analyst": st.session_state.agents.get("data_analyst"),
+                    "rag_agent": st.session_state.agents.get("rag_agent"),
+                    "csv_args": csv_args,
+                    "pdf_context": pdf_context
+                }
+
+                # Vérifier que les agents nécessaires sont disponibles
+                if pdf_context and not st.session_state.agents.get("rag_agent"):
+                    status_placeholder.markdown("_Initialisation de l'agent RAG..._")
+                    rag_agent = initialize_rag_agent(model, pdf_context['db_path'])
+                    if rag_agent:
+                        st.session_state.agents["rag_agent"] = rag_agent
+                        context["rag_agent"] = rag_agent
+                        status_placeholder.markdown("_Agent RAG initialisé_")
+                    else:
+                        status_placeholder.markdown("_❌ Échec de l'initialisation de l'agent RAG_")
+                        st.error("Impossible d'initialiser l'agent RAG. Vérifiez que le PDF est correctement indexé.")
+
+                # Appelez l'agent manager avec la question et le contexte
+                status_placeholder.markdown("_Transmission au manager agent..._")
+                
+                # S'assurer que tous les agents sont présents dans additional_args
+                additional_args = {
+                    # Utilisez les agents de la session state directement
+                    "search_agent": st.session_state.agents["search_agent"] if "search_agent" in st.session_state.agents else None,
+                    "data_analyst": st.session_state.agents["data_analyst"] if "data_analyst" in st.session_state.agents else None, 
+                    "rag_agent": st.session_state.agents["rag_agent"] if "rag_agent" in st.session_state.agents else None,
+                    # Ajouter les données de contexte
+                    "csv_args": csv_args,
+                    "pdf_context": pdf_context
+                }
+                
+                # Afficher les agents disponibles pour déboguer
+                available_agents = [k for k, v in additional_args.items() if k in ['search_agent', 'data_analyst', 'rag_agent'] and v is not None]
+                print(f"Available agents for manager: {available_agents}")
+                status_placeholder.markdown(f"_Agents disponibles: {', '.join(available_agents)}_")
+                
+                try:
+                    # Préparer l'environnement d'exécution pour le manager_agent
+                    execution_vars = {
+                        # Injecter les agents dans le namespace d'exécution
+                        "search_agent": st.session_state.agents.get("search_agent"),
+                        "rag_agent": st.session_state.agents.get("rag_agent"),  
+                        "data_analyst": st.session_state.agents.get("data_analyst"),
+                        # Injecter les variables de contexte
+                        "csv_args": csv_args,
+                        "pdf_context": pdf_context,
+                    }
+                    
+                    # Exécuter le manager_agent avec l'environnement préparé
+                    # Nous ne pouvons pas utiliser local_vars car ce n'est pas supporté
+                    # Nous allons enrichir additional_args à la place
+                    additional_args.update(execution_vars)
+                    
+                    result = st.session_state.agents["manager_agent"].run(
+                        prompt,
+                        additional_args=additional_args
+                    )
+                except Exception as e:
+                    import traceback
+                    print(f"Erreur lors de l'exécution du manager_agent: {e}")
+                    print(f"Traceback: {traceback.format_exc()}")
+                    error_msg = f"Erreur lors de l'exécution du manager_agent: {e}"
+                    status_placeholder.markdown(f"_❌ {error_msg}_")
+                    result = f"Une erreur s'est produite lors du traitement de votre demande. Veuillez réessayer."
+                
+                # Affiche le résultat
+                status_placeholder.markdown("_✅ Traitement terminé_")
+                message_placeholder.markdown(result)
+                st.session_state.messages.append({"role": "assistant", "content": result})
+                
+                # Affiche les figures si générées par data_analyst
+                if csv_args and "figures_dir" in csv_args and os.path.exists(csv_args["figures_dir"]):
+                    status_placeholder.markdown("_Génération des visualisations..._")
+                    for fig in sorted([f for f in os.listdir(csv_args["figures_dir"]) if f.endswith(('.png', '.jpg', '.jpeg'))]):
+                        st.image(os.path.join(csv_args["figures_dir"], fig))
+                    status_placeholder.markdown("_Visualisations générées_")
+                    
+            except Exception as e:
+                error_msg = f"_❌ Erreur : {str(e)}_"
+                status_placeholder.markdown(error_msg)
+                message_placeholder.markdown("Désolé, une erreur s'est produite lors du traitement de votre question.")
+                st.session_state.messages.append({"role": "assistant", "content": error_msg})
 
 if __name__ == "__main__":
     main()

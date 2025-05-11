@@ -33,13 +33,134 @@ EXPORT_BASE_DIR = "data/output"
 for d in [IMAGE_DIR, TABLE_DIR, EXPORT_BASE_DIR]:
     os.makedirs(d, exist_ok=True)
 
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 1800
+CHUNK_OVERLAP = 300
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # DB_PATH will now be passed as an argument
 
+
+# -------- VÉRIFICATION DE BASE DE DONNÉES --------
+
+def verifier_et_reparer_db(db_path: str):
+    """
+    Vérifie l'intégrité de la base de données ChromaDB et tente de la réparer si nécessaire.
+    
+    Args:
+        db_path (str): Chemin vers la base de données ChromaDB.
+        
+    Returns:
+        bool: True si la base de données est accessible, False sinon.
+    """
+    import sqlite3
+    import glob
+    import os
+    
+    print(f"Vérification de la base de données ChromaDB: {db_path}")
+    
+    # Vérifier si le répertoire existe
+    if not os.path.exists(db_path):
+        print(f"Le répertoire de base de données n'existe pas: {db_path}")
+        return False
+    
+    # Chercher le fichier principal de la base SQLite
+    sqlite_files = glob.glob(os.path.join(db_path, "*.sqlite3"))
+    if not sqlite_files:
+        print("Aucun fichier SQLite trouvé dans le répertoire")
+        return False
+    
+    for db_file in sqlite_files:
+        try:
+            # Essayer d'ouvrir la base de données
+            print(f"Vérification du fichier: {db_file}")
+            conn = sqlite3.connect(db_file)
+            cursor = conn.cursor()
+            
+            # Vérifier l'intégrité
+            cursor.execute("PRAGMA integrity_check")
+            integrity_result = cursor.fetchone()[0]
+            print(f"Résultat du contrôle d'intégrité: {integrity_result}")
+            
+            if integrity_result != "ok":
+                print(f"Problème d'intégrité détecté dans {db_file}")
+                
+                # Tentative de réparation
+                try:
+                    # Faire une copie de sauvegarde
+                    backup_file = f"{db_file}.backup"
+                    import shutil
+                    shutil.copy2(db_file, backup_file)
+                    print(f"Copie de sauvegarde créée: {backup_file}")
+                    
+                    # Tentative de réparation par dump/reload
+                    temp_file = f"{db_file}.temp"
+                    with sqlite3.connect(temp_file) as temp_conn:
+                        # Copier le schéma
+                        for line in conn.iterdump():
+                            if line.startswith("CREATE TABLE"):
+                                temp_conn.execute(line)
+                        
+                        # Copier autant de données que possible
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                        tables = cursor.fetchall()
+                        for table in tables:
+                            table_name = table[0]
+                            try:
+                                data = conn.execute(f"SELECT * FROM {table_name}").fetchall()
+                                # On suppose que les colonnes sont dans le même ordre
+                                cursor.execute(f"PRAGMA table_info({table_name})")
+                                columns = cursor.fetchall()
+                                column_count = len(columns)
+                                
+                                for row in data:
+                                    if len(row) == column_count:
+                                        placeholders = ", ".join(["?"] * len(row))
+                                        temp_conn.execute(f"INSERT INTO {table_name} VALUES ({placeholders})", row)
+                            except Exception as e:
+                                print(f"Erreur lors de la copie des données de {table_name}: {e}")
+                    
+                    # Remplacer l'ancien fichier par le nouveau
+                    conn.close()
+                    os.remove(db_file)
+                    os.rename(temp_file, db_file)
+                    print(f"Base de données réparée: {db_file}")
+                    
+                    # Vérifier à nouveau
+                    conn = sqlite3.connect(db_file)
+                    cursor = conn.cursor()
+                    cursor.execute("PRAGMA integrity_check")
+                    new_integrity = cursor.fetchone()[0]
+                    print(f"Nouveau contrôle d'intégrité après réparation: {new_integrity}")
+                    
+                    if new_integrity != "ok":
+                        print("La réparation a échoué, la base de données reste corrompue")
+                        return False
+                except Exception as repair_error:
+                    print(f"Erreur lors de la tentative de réparation: {repair_error}")
+                    return False
+            
+            # Fermer la connexion
+            conn.close()
+            
+        except sqlite3.Error as e:
+            print(f"Erreur SQLite lors de la vérification de {db_file}: {e}")
+            return False
+        except Exception as e:
+            print(f"Erreur inattendue lors de la vérification de {db_file}: {e}")
+            return False
+    
+    # Si nous arrivons ici, c'est que tous les fichiers SQLite sont valides
+    try:
+        # Test final avec ChromaDB
+        import chromadb
+        client = chromadb.PersistentClient(path=db_path)
+        collections = client.list_collections()
+        print(f"Test final réussi: {len(collections)} collections trouvées")
+        return True
+    except Exception as e:
+        print(f"Erreur lors du test final ChromaDB: {e}")
+        return False
 
 # -------- FONCTION PRINCIPALE --------
 
@@ -56,6 +177,26 @@ def analyser_pdf(chemin_pdf, db_path: str, exporter=True):
     """
     print(f"Analyse du PDF: {chemin_pdf}")
     print(f"Utilisation de la base de données: {db_path}")
+    
+    # Vérifier si la base existe déjà et tenter de la réparer si nécessaire
+    if os.path.exists(db_path):
+        print(f"Base de données existante détectée: {db_path}")
+        db_ok = verifier_et_reparer_db(db_path)
+        if not db_ok:
+            print("La base de données existante est inaccessible ou corrompue")
+            backup_path = f"{db_path}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            print(f"Création d'une sauvegarde à {backup_path}")
+            
+            try:
+                shutil.copytree(db_path, backup_path, dirs_exist_ok=True)
+                print(f"Sauvegarde créée. Suppression de l'ancienne base corrompue.")
+                shutil.rmtree(db_path)
+                os.makedirs(db_path, exist_ok=True)
+                print(f"Nouvelle base de données prête à être créée à {db_path}")
+            except Exception as e:
+                print(f"Erreur lors de la sauvegarde/suppression: {e}")
+                print("Tentative de continuer avec le chemin existant...")
+    
     client = Mistral(api_key=MISTRAL_API_KEY)
 
     # 1. Traitement OCR
@@ -306,10 +447,20 @@ def decouper_texte(texte):
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", " ", ""]
+        # Utilisation de séparateurs plus intelligents pour préserver la structure sémantique
+        separators=[
+            "\n## ", "\n### ", "\n#### ", "\n# ",  # Titres markdown
+            "\n\n\n", "\n\n",  # Paragraphes
+            "\n",  # Lignes
+            ". ",  # Phrases
+            ", ", ": ", " ", ""  # Dernier recours
+        ]
     )
     chunks = splitter.split_text(texte)
     print(f"  Texte découpé en {len(chunks)} chunks")
+    # Logging des tailles des chunks pour diagnostic
+    tailles = [len(chunk) for chunk in chunks]
+    print(f"  Taille min/moyenne/max des chunks: {min(tailles)}/{sum(tailles)/len(tailles):.1f}/{max(tailles)}")
     return chunks
 
 
