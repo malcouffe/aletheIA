@@ -53,78 +53,68 @@ class RetrieverTool(Tool):
             
             # Message de confirmation
             persist_dir = getattr(vectordb, '_persist_directory', 'Unknown location')
-            print(f"RetrieverTool initialized with vector store at: {persist_dir}")
+            print(f"RetrieverTool initialisé avec vectordb: {persist_dir}")
     
     def forward(self, query: str = "", additional_notes: str = None) -> str:
         """Méthode principale exécutée par Tool."""
         try:
-            print(f"⭐ RetrieverTool query: '{query}', additional notes: '{additional_notes}'")
+            print(f"RetrieverTool: recherche pour '{query}'")
             
             # Accès à la variable globale
             global _GLOBAL_VECTORDB, _SEARCH_CONFIG
-            print(f"⭐ RetrieverTool GLOBALS: vectordb={_GLOBAL_VECTORDB is not None}, config={_SEARCH_CONFIG is not None}")
             
             # Vérification de la base de données
             if _GLOBAL_VECTORDB is None:
-                print("❌ ERREUR: Base de données vectorielle non initialisée")
+                print("ERREUR: Base de données vectorielle non initialisée")
                 return "Erreur: Base de données vectorielle non initialisée"
             
             # 1. Nettoyage de la requête
             clean_query = self._preprocess_query(query)
-            print(f"⭐ RetrieverTool cleaned query: '{clean_query}'")
             
             # 2. Recherche standard
             try:
-                print(f"⭐ RetrieverTool attempting standard search with k={_SEARCH_CONFIG['k_value']}")
                 standard_results = _GLOBAL_VECTORDB.similarity_search(
                     clean_query,
                     k=_SEARCH_CONFIG['k_value']
                 )
-                print(f"⭐ RetrieverTool standard search found {len(standard_results)} documents")
+                print(f"Recherche standard: {len(standard_results)} documents trouvés")
             except Exception as e:
-                print(f"❌ RetrieverTool standard search FAILED: {e}")
+                print(f"Échec de la recherche standard: {e}")
                 import traceback
                 print(f"TRACEBACK: {traceback.format_exc()}")
                 standard_results = []
             
             # 3. Recherche MMR pour diversité
             try:
-                print(f"⭐ RetrieverTool attempting MMR search with k={_SEARCH_CONFIG['mmr_k']}, fetch_k={_SEARCH_CONFIG['mmr_fetch_k']}")
                 mmr_results = _GLOBAL_VECTORDB.max_marginal_relevance_search(
                     clean_query,
                     k=_SEARCH_CONFIG['mmr_k'],
                     fetch_k=_SEARCH_CONFIG['mmr_fetch_k'],
                     lambda_mult=_SEARCH_CONFIG['mmr_lambda_mult']
                 )
-                print(f"⭐ RetrieverTool MMR search found {len(mmr_results)} documents")
+                print(f"Recherche MMR: {len(mmr_results)} documents trouvés")
             except Exception as e:
-                print(f"❌ RetrieverTool MMR search FAILED: {e}")
+                print(f"Échec de la recherche MMR: {e}")
                 import traceback
                 print(f"TRACEBACK: {traceback.format_exc()}")
                 mmr_results = []
             
             # 4. Combiner et filtrer les résultats
-            print(f"⭐ RetrieverTool combining results: {len(standard_results)} standard + {len(mmr_results)} MMR")
             combined_results = self._combine_results(standard_results, mmr_results)
-            print(f"⭐ RetrieverTool combined {len(combined_results)} unique documents")
             
             # 5. Recherches alternatives si nécessaire
             if len(combined_results) < 2:
-                print(f"⭐ RetrieverTool insufficient results, trying alternatives")
+                print(f"Résultats insuffisants, essai de requêtes alternatives")
                 alternative_results = self._try_alternative_queries(clean_query)
                 combined_results.extend(alternative_results)
-                print(f"⭐ RetrieverTool after alternatives: {len(combined_results)} documents")
             
             # 6. Formatage et retour des résultats
             if not combined_results:
-                print("❌ RetrieverTool no documents found")
+                print("Aucun document trouvé")
                 return f"Aucun document pertinent trouvé pour '{clean_query}'."
-            
-            print(f"⭐ RetrieverTool formatting {len(combined_results)} results")
             
             # Extraire un résumé des sources séparément
             source_summary = self._extract_source_summary(combined_results)
-            print(f"⭐ Source summary: {source_summary[:100] if len(source_summary) > 100 else source_summary}")
             
             # Ajouter des marqueurs spéciaux pour faciliter l'extraction des sources par les agents
             source_section = (
@@ -140,12 +130,12 @@ class RetrieverTool(Tool):
             # Ajouter explicitement la section des sources à la fin
             final_result = f"{result}\n\n{source_section}"
             
-            print(f"⭐ RetrieverTool returning result of length {len(final_result)}")
+            print(f"RetrieverTool: réponse générée ({len(final_result)} caractères)")
             return final_result
             
         except Exception as e:
             error_message = f"Error in retriever tool: {str(e)}"
-            print(f"❌ RetrieverTool ERROR: {error_message}")
+            print(f"ERREUR RetrieverTool: {error_message}")
             import traceback
             print(f"TRACEBACK COMPLET: {traceback.format_exc()}")
             return f"La recherche a échoué avec l'erreur: {error_message}"
@@ -199,7 +189,7 @@ class RetrieverTool(Tool):
     
     def _try_alternative_queries(self, original_query: str) -> List[Document]:
         """Essaie des variantes de la requête pour trouver plus de résultats."""
-        print(f"Trying alternative queries for '{original_query}'")
+        print(f"Essai de requêtes alternatives pour '{original_query}'")
         results = []
         seen_content = set()
         
@@ -218,7 +208,6 @@ class RetrieverTool(Tool):
         # Essayer chaque requête alternative
         for alt_query in alternative_queries:
             if alt_query != original_query:
-                print(f"Trying alternative query: '{alt_query}'")
                 try:
                     alt_results = _GLOBAL_VECTORDB.similarity_search(alt_query, k=2)
                     for doc in alt_results:
@@ -226,13 +215,13 @@ class RetrieverTool(Tool):
                             results.append(doc)
                             seen_content.add(doc.page_content)
                 except Exception as e:
-                    print(f"Alternative query search failed: {e}")
+                    print(f"Échec de la requête alternative '{alt_query}': {e}")
             
             # Si on a suffisamment de résultats, arrêter
             if len(results) >= 3:
                 break
                 
-        print(f"Found {len(results)} documents with alternative queries")
+        print(f"Requêtes alternatives: {len(results)} documents trouvés")
         return results
     
     def _format_results(self, results: List[Document], query: str, additional_notes: str = None) -> str:

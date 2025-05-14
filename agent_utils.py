@@ -24,8 +24,8 @@ def initialize_search_agent(model: OpenAIServerModel) -> ToolCallingAgent:
         tools=[DuckDuckGoSearchTool(), VisitWebpageTool()],
         model=model,
         name="search_agent",
-        max_steps=4,  # Limite à 4 étapes pour réduire les coûts
-        description="Effectue des recherches sur le web en utilisant DuckDuckGo et visite des pages web."
+        max_steps=4,
+        description="Agent de recherche web utilisant DuckDuckGo et visitant des pages web pour trouver des informations pertinentes."
     )
 
 def initialize_data_analyst_agent(model: OpenAIServerModel) -> CodeAgent:
@@ -39,8 +39,8 @@ def initialize_data_analyst_agent(model: OpenAIServerModel) -> CodeAgent:
         model=model,
         additional_authorized_imports=authorized_imports,
         name="data_analyst",
-        max_steps=4,  # Limite à 4 étapes pour réduire les coûts
-        description="Analyse les fichiers CSV et génère des visualisations à partir des données."
+        max_steps=4,
+        description="Agent d'analyse de données CSV qui génère des statistiques et visualisations à partir de données tabulaires."
     )
 
 def initialize_rag_agent(model: OpenAIServerModel, db_path: str) -> CodeAgent | None:
@@ -139,79 +139,17 @@ def initialize_rag_agent(model: OpenAIServerModel, db_path: str) -> CodeAgent | 
             tools=[retriever_tool],
             model=model,
             name="rag_agent",
-            max_steps=100,  # Enlever la limite d'étapes
+            max_steps=100,
             verbosity_level=2,
             description=(
-                "Agent RAG spécialisé dans l'interrogation de documents PDF indexés dans ChromaDB. "
-                "IMPORTANT: Vous avez déjà accès au contenu indexé du PDF via le seul outil disponible : RetrieverTool. "
-                "N'essayez PAS d'accéder directement au fichier PDF ou d'utiliser des bibliothèques comme PyPDF2. "
-                "Le document a déjà été traité et indexé dans une base de données vectorielle (ChromaDB). "
-                "Vous devez simplement formuler des requêtes sémantiques pertinentes avec le RetrieverTool. "
-                "\n\n"
-                "INSTRUCTIONS POUR LA RECHERCHE SÉMANTIQUE EFFICACE:\n"
-                "1. Pour trouver des informations dans les documents:\n"
-                "   - Utilisez des termes simples et directs pour vos requêtes\n"
-                "   - Essayez plusieurs variations de requêtes si nécessaire\n"
-                "   - L'outil RetrieverTool essaiera automatiquement des variantes de votre requête pour améliorer les résultats\n"
-                "\n"
-                "2. Pour des requêtes sur des concepts spécifiques:\n"
-                "   - Commencez par des requêtes directes avec les termes-clés\n"
-                "   - Si nécessaire, essayez d'autres formulations\n"
-                "   - Utilisez le paramètre 'additional_notes' pour ajouter du contexte à votre recherche\n"
-                "\n"
-                "3. Techniques de recherche améliorées:\n"
-                "   - Évitez les questions complètes; préférez des expressions nominales\n"
-                "   - N'incluez PAS le nom du fichier PDF ou l'extension .pdf dans vos requêtes\n"
-                "   - Pour les concepts qui peuvent avoir plusieurs orthographes, essayez les différentes versions\n"
-                "   - Pour les concepts complexes, décomposez en sous-requêtes plus simples\n"
-                "\n"
-                "4. Analyse des résultats:\n"
-                "   - Examinez soigneusement les passages pour identifier les informations pertinentes\n"
-                "   - Recherchez des phrases qui définissent ou expliquent les concepts demandés\n"
-                "   - Synthétisez les informations de plusieurs passages si nécessaire\n"
-                "\n"
-                "FORMAT DE RÉPONSE REQUIS :\n"
-                "Thoughts: [Vos réflexions sur la requête]\n"
-                "Code:\n"
-                "```python\n"
-                "# Formuler une requête simple et directe pour la recherche sémantique\n"
-                "search_query = \"termes clés pertinents\" \n"
-                "\n"
-                "# Ajouter des notes supplémentaires si pertinent\n"
-                "additional_context = \"contexte supplémentaire si nécessaire\"\n"
-                "\n"
-                "# Utiliser le RetrieverTool pour chercher dans la base vectorielle\n"
-                "results = retriever(query=search_query, additional_notes=additional_context)\n"
-                "\n"
-                "# Analyser les résultats\n"
-                "if results and \"Retrieved documents:\" in results:\n"
-                "    # Extraire les informations pertinentes\n"
-                "    relevant_info = \"\"\n"
-                "    # Traiter le texte pour extraire l'information demandée\n"
-                "    documents = results.split(\"===== Document\")\n"
-                "    \n"
-                "    # Analyser chaque document pour trouver des informations pertinentes\n"
-                "    for doc in documents[1:]:  # Skip the first empty element\n"
-                "        # Analyser si ce document contient des informations pertinentes\n"
-                "        if \"terme recherché\" in doc.lower():\n"
-                "            relevant_info += doc\n"
-                "    \n"
-                "    if relevant_info:\n"
-                "        return f\"D'après le document indexé, {relevant_info}\"\n"
-                "    else:\n"
-                "        # Si rien trouvé, essayer une autre requête\n"
-                "        backup_results = retriever(query=\"autre formulation de recherche\", additional_notes=\"contexte supplémentaire\")\n"
-                "        \n"
-                "        if backup_results and \"Retrieved documents:\" in backup_results:\n"
-                "            backup_docs = backup_results.split(\"===== Document\")\n"
-                "            for doc in backup_docs[1:]:  # Skip the first empty element\n"
-                "                if \"terme recherché\" in doc.lower():\n"
-                "                    return f\"D'après le document indexé avec requête alternative, {doc}\"\n"
-                "        \n"
-                "        return \"Je n'ai pas trouvé d'informations spécifiques sur ce sujet dans le document indexé.\"\n"
-                "else:\n"
-                "    return \"Aucun document pertinent trouvé dans la base de données vectorielle.\"\n"
-                "```\n"
+                "Agent RAG pour l'interrogation de documents PDF indexés dans ChromaDB. "
+                "Utilisez uniquement l'outil RetrieverTool pour rechercher des informations. "
+                "Conseils de recherche: "
+                "- Formulez des requêtes simples avec des mots-clés pertinents "
+                "- Préférez les termes nominaux aux phrases complètes "
+                "- Utilisez le paramètre additional_notes au besoin pour préciser le contexte "
+                "- Analysez attentivement les résultats pour synthétiser une réponse précise "
+                "- Incluez toujours les sources documentaires dans votre réponse"
             )
         )
         print("RAG Agent initialized successfully with RetrieverTool.")
@@ -244,9 +182,7 @@ class DelegateTool(Tool):
     output_type = "string"
 
     def forward(self, agent_name: str, user_query: str, context: dict = None) -> str:
-        print(f"\n=== DelegateTool Debug ===")
-        print(f"Agent demandé: {agent_name}")
-        print(f"Requête: {user_query}")
+        print(f"DelegateTool: délégation à '{agent_name}'")
         
         try:
             # Approche simplifiée: Utiliser les agents depuis un import explicite
@@ -258,14 +194,12 @@ class DelegateTool(Tool):
                 return "Erreur: Les agents ne sont pas correctement initialisés."
             
             agents = st.session_state.agents
-            print(f"Agents disponibles: {list(agents.keys())}")
-        
+            
             if agent_name not in agents or agents[agent_name] is None:
                 print(f"Erreur: Agent '{agent_name}' non disponible")
                 return f"Erreur: Agent '{agent_name}' non disponible. Agents disponibles: {list(agents.keys())}"
             
             agent = agents[agent_name]
-            print(f"Agent '{agent_name}' trouvé de type {type(agent).__name__}")
             
             # Signaler quel agent est actuellement utilisé (pour l'affichage dans le statut)
             st.session_state.current_agent = agent_name
@@ -277,7 +211,6 @@ class DelegateTool(Tool):
                     # Vérifier que le vectordb est configuré
                     from managed_agent.retriever_tool import get_vectordb
                     vectordb = get_vectordb()
-                    print(f"⭐ RAG Agent vectordb configured: {vectordb is not None}")
                     
                     # Ajouter des logs pour le statut
                     if hasattr(st, "session_state") and "status_placeholder" in st.session_state:
@@ -285,9 +218,7 @@ class DelegateTool(Tool):
                     
                     # Exécuter l'agent
                     result = agent.run(user_query)
-                    print(f"Résultat du rag_agent (début): {result[:100]}...")
-                    print(f"Résultat du rag_agent (fin): ...{result[-100:] if len(result) > 100 else result}")
-                    print(f"Longueur du résultat: {len(result)}")
+                    print(f"RAG Agent: génération d'une réponse de {len(result)} caractères")
                     
                     # FORCER l'inclusion des sources - ajout d'un intercepteur pour vérifier si le résultat
                     # contient déjà une section de sources, et en ajouter une si ce n'est pas le cas
@@ -295,7 +226,7 @@ class DelegateTool(Tool):
                     
                     # Si le résultat ne contient pas de section de sources, essayer d'en ajouter une
                     if not has_sources:
-                        print("❗ Le résultat ne contient pas de section de sources, nous allons en ajouter une!")
+                        print("Ajout forcé des sources documentaires")
                         try:
                             # Accéder directement à la base de données vectorielle
                             from managed_agent.retriever_tool import get_vectordb
@@ -338,20 +269,14 @@ class DelegateTool(Tool):
                                     # Sauvegarder les sources pour affichage dans le statut
                                     st.session_state.rag_sources = [f"{source_name} (pages: {', '.join(sorted(pages, key=lambda x: int(x) if x.isdigit() else x))})" 
                                                               for source_name, pages in sources_info.items()]
-                                    print(f"Sources ajoutées manuellement: {sources_section[:100]}...")
                         except Exception as e:
                             print(f"Erreur lors de l'ajout forcé des sources: {e}")
                             import traceback
                             print(f"TRACEBACK: {traceback.format_exc()}")
-                            # Ne pas faire échouer l'exécution si l'ajout forcé échoue
-                    
-                    # Vérifier si le résultat contient la section des sources après les ajouts forcés
-                    has_sources_section = "Sources documentaires" in result
-                    print(f"Le résultat contient-il maintenant une section sources? {has_sources_section}")
                     
                     return result
                 except Exception as e:
-                    print(f"❌ ERROR in rag_agent execution: {e}")
+                    print(f"Erreur RAG Agent: {e}")
                     import traceback
                     print(f"TRACEBACK: {traceback.format_exc()}")
                     return f"Erreur lors de l'exécution du rag_agent: {e}"
@@ -363,7 +288,7 @@ class DelegateTool(Tool):
                     st.session_state.status_placeholder.markdown(f"_🔍 Agent de Recherche Web en cours d'exécution pour la requête: \"{user_query}\"_")
                 
                 result = agent.run(user_query)
-                print(f"Résultat du search_agent: {result[:100]}...")
+                print(f"Search Agent: réponse générée")
                 return result
             elif agent_name == "data_analyst":
                 print("Exécution du data_analyst")
@@ -388,7 +313,7 @@ class DelegateTool(Tool):
                     result = agent.run(user_query, additional_args={"csv_analyzer": csv_args})
                 else:
                     result = agent.run(user_query)
-                print(f"Résultat du data_analyst: {result[:100]}...")
+                print(f"Data Analyst: réponse générée")
                 return result
             else:
                 return f"Agent '{agent_name}' non reconnu."
@@ -396,8 +321,8 @@ class DelegateTool(Tool):
         except Exception as e:
             import traceback
             traceback_str = traceback.format_exc()
-            print(f"Erreur lors de l'exécution du delegate_to_agent: {str(e)}")
-            print(f"Traceback complet:\n{traceback_str}")
+            print(f"Erreur DelegateTool: {str(e)}")
+            print(f"Traceback: {traceback_str}")
             return f"Erreur lors de l'exécution de l'agent {agent_name}: {str(e)}"
 
 def initialize_manager_agent(model: OpenAIServerModel) -> CodeAgent:
@@ -406,97 +331,14 @@ def initialize_manager_agent(model: OpenAIServerModel) -> CodeAgent:
         tools=[DelegateTool()],
         model=model,
         name="manager_agent",
-        max_steps=4,  # Limite à 4 étapes pour réduire les coûts
+        max_steps=4,
         description=(
-            "Agent manager qui achemine les requêtes vers des agents spécialisés. "
-            "IMPORTANT: Vous DEVEZ toujours générer un bloc de code Python valide, même en cas d'erreur. "
-            "Vous n'avez PAS besoin d'accéder directement aux fichiers (PDF ou CSV). Les agents spécialisés ont déjà accès aux données. "
-            "\n\n"
-            "Format de réponse requis :\n"
-            "Thoughts: [Vos réflexions sur la requête]\n"
-            "Code:\n"
-            "```python\n"
-            "# Votre code Python ici\n"
-            "```\n\n"
-            "RÈGLES DE ROUTAGE DES REQUÊTES:\n"
-            "1. Analyse fine de la requête:\n"
-            "   - Identifiez s'il s'agit d'une demande de définition, d'une analyse, d'une recherche générale, etc.\n"
-            "   - Déterminez si la requête concerne des documents PDF indexés, des données CSV, ou nécessite une recherche web\n"
-            "\n"
-            "2. Pour les définitions et concepts:\n"
-            "   - Si la requête concerne un concept SPÉCIFIQUE à un PDF indexé (ex: tokenised deposits dans un document financier):\n"
-            "     → Utilisez d'abord le rag_agent avec une requête précise\n"
-            "   - Si le rag_agent ne trouve pas l'information OU si le concept est général:\n"
-            "     → Utilisez le search_agent pour une recherche web\n"
-            "\n"
-            "3. Stratégie de recherche préférée:\n"
-            "   - Donnez la priorité à la recherche dans les PDF indexés lorsque les termes recherchés sont mentionnés dans le contexte PDF\n"
-            "   - Si un terme technique précis est demandé (comme \"tokenised deposits\"), essayez toujours PRIORITAIREMENT le rag_agent\n"
-            "   - Ensuite, utilisez le search_agent comme sauvegarde si nécessaire\n"
-            "\n"
-            "EXEMPLES D'IMPLÉMENTATION:\n"
-            "\n"
-            "1. Pour interroger un document PDF indexé (définitions, explications, etc.):\n"
-            "```python\n"
-            "# Détection de requête de définition ou de concept technique\n"
-            "definition_keywords = [\"définition\", \"definition\", \"concept\", \"what is\", \"qu'est-ce que\", \"signification\", \"meaning\"]\n"
-            "is_definition_query = any(keyword in user_query.lower() for keyword in definition_keywords)\n"
-            "\n"
-            "# Détection de termes techniques spécifiques\n"
-            "technical_terms = [\"tokenised deposits\", \"tokenized deposits\", \"cbdc\", \"stablecoin\"]\n"
-            "contains_technical_term = any(term in user_query.lower() for term in technical_terms)\n"
-            "\n"
-            "# Si PDF disponible et requête sur définition/terme technique, essayer d'abord le RAG\n"
-            "if pdf_context is not None and (is_definition_query or contains_technical_term):\n"
-            "    # Essayer d'abord avec le rag_agent pour trouver dans le document indexé\n"
-            "    rag_result = delegate_to_agent(\n"
-            "        agent_name='rag_agent',\n"
-            "        user_query=user_query,  # Transmettre la requête originale\n"
-            "        context=None\n"
-            "    )\n"
-            "    \n"
-            "    # Vérifier si le rag_agent a trouvé une réponse utile\n"
-            "    not_found_indicators = [\n"
-            "        \"je n'ai pas trouvé\", \n"
-            "        \"aucun document pertinent\", \n"
-            "        \"no relevant documents\",\n"
-            "        \"aucune information\"\n"
-            "    ]\n"
-            "    \n"
-            "    # Si le RAG n'a rien trouvé d'utile, essayer le search_agent comme fallback\n"
-            "    if any(indicator in rag_result.lower() for indicator in not_found_indicators):\n"
-            "        search_result = delegate_to_agent(\n"
-            "            agent_name='search_agent',\n"
-            "            user_query=user_query,\n"
-            "            context=None\n"
-            "        )\n"
-            "        return f\"Le document indexé ne contenait pas l'information recherchée. Voici ce que j'ai trouvé sur le web: {search_result}\"\n"
-            "    else:\n"
-            "        return rag_result\n"
-            "```\n"
-            "\n"
-            "2. Pour des recherches web:\n"
-            "```python\n"
-            "# Pour des informations générales ou des définitions externes\n"
-            "result = delegate_to_agent(\n"
-            "    agent_name='search_agent',\n"
-            "    user_query=user_query,  # Utiliser la requête originale\n"
-            "    context=None\n"
-            ")\n"
-            "return result\n"
-            "```\n"
-            "\n"
-            "3. Pour analyser des données CSV:\n"
-            "```python\n"
-            "# Si des données CSV sont disponibles\n"
-            "if csv_args is not None:\n"
-            "    result = delegate_to_agent(\n"
-            "        agent_name='data_analyst',\n"
-            "        user_query=user_query,  # Utiliser la requête originale\n"
-            "        context=None\n"
-            "    )\n"
-            "    return result\n"
-            "```\n"
+            "Agent manager qui route les requêtes vers des agents spécialisés. "
+            "Utilisez les agents disponibles (search_agent, data_analyst, rag_agent) selon le type de requête. "
+            "Priorité aux documents PDF indexés pour les questions techniques spécifiques. "
+            "Utilisez le search_agent pour des infos générales ou comme fallback. "
+            "Utilisez le data_analyst pour l'analyse CSV. "
+            "Générez toujours un code Python utilisant la fonction delegate_to_agent()."
         )
     )
 
