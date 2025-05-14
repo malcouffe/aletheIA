@@ -13,6 +13,13 @@ from agent_utils import (
     initialize_rag_agent,
     initialize_data_analyst_agent
 )
+# Import optionnel de la nouvelle implémentation du manager si disponible
+try:
+    from managed_agent.manager import initialize_manager_agent as new_initialize_manager_agent
+    use_new_manager = True
+except ImportError:
+    use_new_manager = False
+    print("Utilisation de l'implémentation d'origine du manager_agent")
 
 torch.classes.__path__ = []
 
@@ -407,7 +414,7 @@ def build_manager_prompt(user_query, csv_args, pdf_context):
     2. If a CSV is loaded ('CSV Loaded: Yes'), use data_analyst.
     3. Otherwise, use search_agent.
 
-    Instructions:
+    Instructions: 
     - Analyze the query and context.
     - Generate Python code to call the .run() method of the chosen agent.
     - Use the provided agent instances (search_agent, data_analyst, rag_agent) from additional_args.
@@ -484,7 +491,7 @@ def main():
             )
             # Initialiser les agents au démarrage
             print("Initialisation des agents...")
-            
+
             # Initialise les agents de base si le modèle est prêt et qu'ils n'existent pas encore
             if not st.session_state.agents.get("search_agent"):
                 print("Initialisation de search_agent")
@@ -492,7 +499,11 @@ def main():
                 
             if not st.session_state.agents.get("manager_agent"):
                 print("Initialisation de manager_agent")
-                st.session_state.agents["manager_agent"] = initialize_manager_agent(model)
+                if use_new_manager:
+                    print("Utilisation de la nouvelle implémentation du manager_agent")
+                    st.session_state.agents["manager_agent"] = new_initialize_manager_agent(model)
+                else:
+                    st.session_state.agents["manager_agent"] = initialize_manager_agent(model)
                 
             # Vérifier/initialiser les autres agents si nécessaire
             # Vérifier les PDFs déjà indexés pour initialiser le RAG agent
@@ -606,6 +617,9 @@ def main():
             message_placeholder = st.empty()
             
             try:
+                # Stocker le status_placeholder dans session_state pour que les agents puissent le mettre à jour
+                st.session_state.status_placeholder = status_placeholder
+                
                 # Message initial
                 status_placeholder.markdown("_Début de l'analyse..._")
                 
@@ -615,8 +629,10 @@ def main():
                 
                 # Vérifier si un PDF est indexé
                 status_placeholder.markdown("_Recherche de documents disponibles..._")
+                pdf_files = []
                 for file_id, details in st.session_state.processed_files.items():
                     if details.get('type') == 'pdf' and details.get('indexed', False):
+                        pdf_files.append(details.get('filename', 'PDF sans nom'))
                         if "rag_agent" not in st.session_state.agents:
                             status_placeholder.markdown("_Initialisation de l'agent RAG..._")
                             db_path = details.get('db_path')
@@ -639,12 +655,19 @@ def main():
                             "filename": details.get('filename'),
                             "db_path": details.get('db_path')
                         }
-                        status_placeholder.markdown(f"_Document trouvé : {details.get('filename')}_")
+                        status_placeholder.markdown(f"_Document PDF indexé trouvé : {details.get('filename')}_")
                         break
                 
+                if len(pdf_files) > 0:
+                    status_placeholder.markdown(f"_Documents PDF indexés disponibles : {', '.join(pdf_files)}_")
+                else:
+                    status_placeholder.markdown("_Aucun document PDF indexé disponible_")
+                
                 # Vérifie si un CSV est chargé
+                csv_files = []
                 for file_id, details in st.session_state.processed_files.items():
                     if details.get('type') == 'csv' and details.get('status') == 'ready':
+                        csv_files.append(details.get('filename', 'CSV sans nom'))
                         if "data_analyst" not in st.session_state.agents:
                             status_placeholder.markdown("_Initialisation de l'agent d'analyse..._")
                             st.session_state.agents["data_analyst"] = initialize_data_analyst_agent(model)
@@ -653,6 +676,11 @@ def main():
                         csv_args = details.get('csv_args')
                         status_placeholder.markdown(f"_Fichier CSV trouvé : {details.get('filename')}_")
                         break
+                
+                if len(csv_files) > 0:
+                    status_placeholder.markdown(f"_Fichiers CSV disponibles : {', '.join(csv_files)}_")
+                else:
+                    status_placeholder.markdown("_Aucun fichier CSV disponible_")
 
                 # Créez un dictionnaire de contexte pour tous les agents et ressources
                 status_placeholder.markdown("_Préparation du contexte..._")
@@ -676,46 +704,59 @@ def main():
                         status_placeholder.markdown("_❌ Échec de l'initialisation de l'agent RAG_")
                         st.error("Impossible d'initialiser l'agent RAG. Vérifiez que le PDF est correctement indexé.")
 
-                # Appelez l'agent manager avec la question et le contexte
-                status_placeholder.markdown("_Transmission au manager agent..._")
-                
-                # S'assurer que tous les agents sont présents dans additional_args
-                additional_args = {
-                    # Utilisez les agents de la session state directement
-                    "search_agent": st.session_state.agents["search_agent"] if "search_agent" in st.session_state.agents else None,
-                    "data_analyst": st.session_state.agents["data_analyst"] if "data_analyst" in st.session_state.agents else None, 
-                    "rag_agent": st.session_state.agents["rag_agent"] if "rag_agent" in st.session_state.agents else None,
-                    # Ajouter les données de contexte
-                    "csv_args": csv_args,
-                    "pdf_context": pdf_context
-                }
-                
                 # Afficher les agents disponibles pour déboguer
-                available_agents = [k for k, v in additional_args.items() if k in ['search_agent', 'data_analyst', 'rag_agent'] and v is not None]
+                available_agents = [k for k, v in context.items() if k in ['search_agent', 'data_analyst', 'rag_agent'] and v is not None]
                 print(f"Available agents for manager: {available_agents}")
                 status_placeholder.markdown(f"_Agents disponibles: {', '.join(available_agents)}_")
                 
+                # Préparer l'environnement d'exécution pour le manager_agent
+                execution_vars = {
+                    # Injecter les agents dans le namespace d'exécution
+                    "search_agent": st.session_state.agents.get("search_agent"),
+                    "rag_agent": st.session_state.agents.get("rag_agent"),  
+                    "data_analyst": st.session_state.agents.get("data_analyst"),
+                    # Injecter les variables de contexte
+                    "csv_args": csv_args,
+                    "pdf_context": pdf_context,
+                }
+                
+                # Enrichir context avec les variables d'exécution
+                context.update(execution_vars)
+                
+                # Indiquer l'utilisation du manager
+                status_placeholder.markdown("_🧠 Agent Manager en cours d'exécution pour déterminer la meilleure approche..._")
+                
+                # Définir l'agent actif initial (sera mis à jour par le delegate_tool)
+                st.session_state.current_agent = "manager_agent"
+                
+                # Exécuter le manager_agent
                 try:
-                    # Préparer l'environnement d'exécution pour le manager_agent
-                    execution_vars = {
-                        # Injecter les agents dans le namespace d'exécution
-                        "search_agent": st.session_state.agents.get("search_agent"),
-                        "rag_agent": st.session_state.agents.get("rag_agent"),  
-                        "data_analyst": st.session_state.agents.get("data_analyst"),
-                        # Injecter les variables de contexte
-                        "csv_args": csv_args,
-                        "pdf_context": pdf_context,
-                    }
-                    
-                    # Exécuter le manager_agent avec l'environnement préparé
-                    # Nous ne pouvons pas utiliser local_vars car ce n'est pas supporté
-                    # Nous allons enrichir additional_args à la place
-                    additional_args.update(execution_vars)
-                    
                     result = st.session_state.agents["manager_agent"].run(
                         prompt,
-                        additional_args=additional_args
+                        additional_args=context
                     )
+                    
+                    # Afficher l'agent utilisé dans le statut final
+                    agent_name_mapping = {
+                        "manager_agent": "🧠 Agent Manager",
+                        "rag_agent": "📚 Agent RAG (Recherche dans les documents)",
+                        "search_agent": "🔍 Agent de Recherche Web",
+                        "data_analyst": "📊 Agent d'Analyse de Données"
+                    }
+                    
+                    current_agent = st.session_state.get('current_agent', 'manager_agent')
+                    agent_display_name = agent_name_mapping.get(current_agent, current_agent)
+                    
+                    # Afficher les sources RAG si elles sont disponibles
+                    rag_sources_info = ""
+                    if current_agent == "rag_agent" and "rag_sources" in st.session_state and st.session_state.rag_sources:
+                        sources = st.session_state.rag_sources
+                        rag_sources_info = "\n\n_📄 Documents utilisés:_\n" + "\n".join([f"- {src}" for src in sources[:5]])
+                        if len(sources) > 5:
+                            rag_sources_info += f"\n- ... et {len(sources) - 5} autres sources"
+                    
+                    status_placeholder.markdown(f"_✅ Traitement terminé par {agent_display_name}_{rag_sources_info}")
+                    
                 except Exception as e:
                     import traceback
                     print(f"Erreur lors de l'exécution du manager_agent: {e}")
@@ -725,7 +766,6 @@ def main():
                     result = f"Une erreur s'est produite lors du traitement de votre demande. Veuillez réessayer."
                 
                 # Affiche le résultat
-                status_placeholder.markdown("_✅ Traitement terminé_")
                 message_placeholder.markdown(result)
                 st.session_state.messages.append({"role": "assistant", "content": result})
                 
@@ -735,7 +775,7 @@ def main():
                     for fig in sorted([f for f in os.listdir(csv_args["figures_dir"]) if f.endswith(('.png', '.jpg', '.jpeg'))]):
                         st.image(os.path.join(csv_args["figures_dir"], fig))
                     status_placeholder.markdown("_Visualisations générées_")
-                    
+                        
             except Exception as e:
                 error_msg = f"_❌ Erreur : {str(e)}_"
                 status_placeholder.markdown(error_msg)

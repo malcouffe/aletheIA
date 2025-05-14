@@ -11,10 +11,12 @@ from smolagents import (
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings 
 from langchain_core.vectorstores import VectorStore
-from managed_agent.retriever_tool import RetrieverTool
+from managed_agent.retriever_tool import RetrieverTool, get_vectordb, set_vectordb
+from managed_agent.vector_db_manager import get_vector_db_manager
+from managed_agent.vector_config import EMBEDDING_CONFIG, get_db_path
 
 # Define embedding model name centrally
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL_NAME = EMBEDDING_CONFIG["model_name"]
 
 def initialize_search_agent(model: OpenAIServerModel) -> ToolCallingAgent:
     """Initializes the web search agent."""
@@ -50,102 +52,94 @@ def initialize_rag_agent(model: OpenAIServerModel, db_path: str) -> CodeAgent | 
         if not db_path or not isinstance(db_path, str):
             raise ValueError(f"Invalid db_path: {db_path}")
             
+        # Si le chemin spécifié n'existe pas, essayer de localiser la base dans les répertoires standards
         if not os.path.exists(db_path):
-            raise FileNotFoundError(f"Vector DB path not found: {db_path}")
+            print(f"Vector DB path not found at {db_path}, looking in standard locations...")
             
-        # Vérifier si le répertoire contient des fichiers ChromaDB
-        chroma_files = [f for f in os.listdir(db_path) if f.endswith('.sqlite3') or f == 'chroma.sqlite3']
-        if not chroma_files:
-            # Vérifier s'il y a au moins quelques fichiers attendus
-            all_files = os.listdir(db_path)
-            print(f"Files in DB directory: {all_files}")
+            # Essayer de trouver la base dans data/output/vectordb
+            standard_db_dir = os.path.join("data", "output", "vectordb")
+            if os.path.exists(standard_db_dir):
+                print(f"Checking in {standard_db_dir}")
+                subdirs = [d for d in os.listdir(standard_db_dir) if os.path.isdir(os.path.join(standard_db_dir, d))]
+                
+                if subdirs:
+                    found_valid_db = False
+                    
+                    for subdir in subdirs:
+                        possible_db_path = os.path.join(standard_db_dir, subdir)
+                        print(f"Examining potential DB path: {possible_db_path}")
+                        
+                        # Vérifier si ce répertoire contient une collection pdf_collection
+                        try:
+                            import chromadb
+                            client = chromadb.PersistentClient(path=possible_db_path)
+                            collections = client.list_collections()
+                            collection_names = [c.name for c in collections]
+                            
+                            print(f"Found collections: {collection_names}")
+                            if "pdf_collection" in collection_names:
+                                print(f"Found valid vectordb at {possible_db_path} with pdf_collection")
+                                db_path = possible_db_path
+                                found_valid_db = True
+                                break
+                        except Exception as e:
+                            print(f"Error checking collections in {possible_db_path}: {e}")
+                            continue
+                    
+                    if not found_valid_db and subdirs:
+                        # Si aucune collection valide n'a été trouvée mais qu'il y a des sous-répertoires,
+                        # utiliser le premier comme fallback
+                        db_path = os.path.join(standard_db_dir, subdirs[0])
+                        print(f"No valid collection found, using first available as fallback: {db_path}")
             
-            if len(all_files) < 2:  # Généralement, il devrait y avoir plusieurs fichiers
-                raise FileNotFoundError(f"Vector DB directory exists but appears empty: {db_path}")
+            # Si toujours pas trouvé, lever l'erreur
+            if not os.path.exists(db_path):
+                raise FileNotFoundError(f"Vector DB path not found: {db_path}")
+
+        # Utiliser le VectorDBManager pour gérer la connexion à la base de données
+        db_manager = get_vector_db_manager(db_path)
+        
+        # Récupérer l'instance vectordb
+        vector_store = db_manager.get_vectordb()
+        
+        if vector_store is None:
+            # Si l'initialisation a échoué, tenter une réparation
+            success, repair_msg = db_manager.repair_database()
+            print(f"Database repair attempt: {repair_msg}")
+            
+            if success:
+                vector_store = db_manager.get_vectordb()
             else:
-                print(f"Warning: No direct SQLite files found in {db_path}, but directory contains {len(all_files)} files")
-
-        # 1. Initialize the embedding model using the LangChain wrapper
-        model_kwargs = {'device': 'cpu'}
-        encode_kwargs = {'normalize_embeddings': False}
-        embedding_function = HuggingFaceEmbeddings(
-            model_name=EMBEDDING_MODEL_NAME,
-            model_kwargs=model_kwargs,
-            encode_kwargs=encode_kwargs,
-        )
-
-        # 2. Initialize the Chroma vector store with the wrapped embedding function
-        print(f"Initializing Chroma vector store with persist_directory={db_path}")
-        try:
-            vector_store = Chroma(
-                persist_directory=db_path,
-                embedding_function=embedding_function
-            )
-            
-            # Test simple de connexion
-            try:
-                test_results = vector_store.similarity_search("test connection", k=1)
-                print(f"Database connection test successful: found {len(test_results)} results")
-            except Exception as test_error:
-                print(f"Database connection test error: {test_error}")
-                print("Attempting to fix the connection...")
-                
-                # Si le test a échoué, essayons de recréer la connection avec un autre client
-                import chromadb
-                client = chromadb.PersistentClient(path=db_path)
-                try:
-                    collections = client.list_collections()
-                    print(f"Found {len(collections)} collections in ChromaDB")
-                    if collections:
-                        collection_name = collections[0].name
-                        print(f"Using collection: {collection_name}")
-                        # Recréer le Chroma store avec ce client explicite
-                        vector_store = Chroma(
-                            client=client,
-                            collection_name=collection_name,
-                            embedding_function=embedding_function
-                        )
-                        print("Successfully recreated Chroma connection")
-                    else:
-                        raise ValueError("No collections found in the database")
-                except Exception as collection_error:
-                    print(f"Error accessing collections: {collection_error}")
-                    raise
-        except Exception as chroma_error:
-            print(f"Error initializing Chroma: {chroma_error}")
-            # Essayer une approche alternative si la première échoue
-            try:
-                print("Trying alternative Chroma initialization...")
-                import chromadb
-                client = chromadb.PersistentClient(path=db_path)
-                
-                # Lister les collections disponibles
-                collections = client.list_collections()
-                if not collections:
-                    raise ValueError(f"No collections found in database at {db_path}")
-                
-                collection_name = collections[0].name
-                print(f"Using collection: {collection_name}")
-                
-                vector_store = Chroma(
-                    client=client,
-                    collection_name=collection_name,
-                    embedding_function=embedding_function
-                )
-                print("Alternative Chroma initialization successful")
-            except Exception as alt_error:
-                print(f"Alternative initialization failed: {alt_error}")
-                raise
+                raise ValueError(f"Failed to initialize vector database: {repair_msg}")
+        
+        # Vérifier l'intégrité de la base
+        integrity_ok, integrity_msg = db_manager.check_database_integrity()
+        print(f"Database integrity check: {integrity_msg}")
+        
+        if not integrity_ok:
+            print("Warning: Database integrity check failed, but continuing...")
 
         # 3. Initialize the RetrieverTool with detailed logging
-        retriever_tool = RetrieverTool(vectordb=vector_store)
+        try:
+            print("Creating RetrieverTool instance...")
+            retriever_tool = RetrieverTool(vectordb=vector_store)
+            
+            # Vérification explicite que la base de données vectorielle est correctement définie
+            if get_vectordb() is None:
+                print("Warning: vectordb not properly set in RetrieverTool, setting it manually...")
+                set_vectordb(vector_store)
+                
+            print("RetrieverTool instance created successfully")
+        except Exception as tool_error:
+            print(f"Error creating RetrieverTool: {tool_error}")
+            raise
 
         # 4. Initialize the RAG Agent with specific instructions
         rag_agent = CodeAgent(
             tools=[retriever_tool],
             model=model,
             name="rag_agent",
-            max_steps=4,  # Limite à 4 étapes pour réduire les coûts
+            max_steps=100,  # Enlever la limite d'étapes
             verbosity_level=2,
             description=(
                 "Agent RAG spécialisé dans l'interrogation de documents PDF indexés dans ChromaDB. "
@@ -155,36 +149,36 @@ def initialize_rag_agent(model: OpenAIServerModel, db_path: str) -> CodeAgent | 
                 "Vous devez simplement formuler des requêtes sémantiques pertinentes avec le RetrieverTool. "
                 "\n\n"
                 "INSTRUCTIONS POUR LA RECHERCHE SÉMANTIQUE EFFICACE:\n"
-                "1. Pour trouver une définition ou un concept:\n"
-                "   - Utilisez des termes simples et directs comme 'tokenised deposits definition' ou 'tokenized deposits concept'\n"
-                "   - Essayez plusieurs variations de requêtes si la première ne donne pas de résultats pertinents\n"
+                "1. Pour trouver des informations dans les documents:\n"
+                "   - Utilisez des termes simples et directs pour vos requêtes\n"
+                "   - Essayez plusieurs variations de requêtes si nécessaire\n"
                 "   - L'outil RetrieverTool essaiera automatiquement des variantes de votre requête pour améliorer les résultats\n"
                 "\n"
-                "2. Pour des requêtes sur des termes spécifiques comme 'tokenised deposits':\n"
-                "   - Commencez par une requête directe : 'tokenised deposits definition'\n"
-                "   - Si nécessaire, essayez d'autres formulations : 'what are tokenised deposits' ou 'tokenised deposits explanation'\n"
-                "   - Utilisez le paramètre 'additional_notes' pour ajouter du contexte: additional_notes='looking for a formal definition from BIS or financial regulations'\n"
+                "2. Pour des requêtes sur des concepts spécifiques:\n"
+                "   - Commencez par des requêtes directes avec les termes-clés\n"
+                "   - Si nécessaire, essayez d'autres formulations\n"
+                "   - Utilisez le paramètre 'additional_notes' pour ajouter du contexte à votre recherche\n"
                 "\n"
                 "3. Techniques de recherche améliorées:\n"
                 "   - Évitez les questions complètes; préférez des expressions nominales\n"
                 "   - N'incluez PAS le nom du fichier PDF ou l'extension .pdf dans vos requêtes\n"
-                "   - Si vous recherchez un concept qui peut avoir plusieurs orthographes, essayez les deux versions (ex: 'tokenized' et 'tokenised')\n"
+                "   - Pour les concepts qui peuvent avoir plusieurs orthographes, essayez les différentes versions\n"
                 "   - Pour les concepts complexes, décomposez en sous-requêtes plus simples\n"
                 "\n"
                 "4. Analyse des résultats:\n"
-                "   - Examinez soigneusement les résultats pour identifier les passages contenant des définitions formelles\n"
-                "   - Recherchez des phrases comme 'X are defined as', 'X refer to', 'X means'\n"
-                "   - Parfois, les définitions sont introduites par des phrases comme 'In this paper, X refers to...'\n"
+                "   - Examinez soigneusement les passages pour identifier les informations pertinentes\n"
+                "   - Recherchez des phrases qui définissent ou expliquent les concepts demandés\n"
+                "   - Synthétisez les informations de plusieurs passages si nécessaire\n"
                 "\n"
                 "FORMAT DE RÉPONSE REQUIS :\n"
                 "Thoughts: [Vos réflexions sur la requête]\n"
                 "Code:\n"
                 "```python\n"
                 "# Formuler une requête simple et directe pour la recherche sémantique\n"
-                "search_query = \"tokenised deposits definition\" \n"
+                "search_query = \"termes clés pertinents\" \n"
                 "\n"
                 "# Ajouter des notes supplémentaires si pertinent\n"
-                "additional_context = \"looking for formal definition in financial documents\"\n"
+                "additional_context = \"contexte supplémentaire si nécessaire\"\n"
                 "\n"
                 "# Utiliser le RetrieverTool pour chercher dans la base vectorielle\n"
                 "results = retriever(query=search_query, additional_notes=additional_context)\n"
@@ -193,37 +187,25 @@ def initialize_rag_agent(model: OpenAIServerModel, db_path: str) -> CodeAgent | 
                 "if results and \"Retrieved documents:\" in results:\n"
                 "    # Extraire les informations pertinentes\n"
                 "    relevant_info = \"\"\n"
-                "    # Traiter le texte pour extraire la définition ou l'information demandée\n"
+                "    # Traiter le texte pour extraire l'information demandée\n"
                 "    documents = results.split(\"===== Document\")\n"
                 "    \n"
-                "    # Chercher d'abord les définitions explicites\n"
-                "    definition_markers = [\"are defined as\", \"refers to\", \"is defined as\", \"definition\", \"concept of\", \"means\"]\n"
-                "    definition_found = False\n"
-                "    \n"
+                "    # Analyser chaque document pour trouver des informations pertinentes\n"
                 "    for doc in documents[1:]:  # Skip the first empty element\n"
-                "        doc_lower = doc.lower()\n"
-                "        if \"tokenised deposits\" in doc_lower or \"tokenized deposits\" in doc_lower:\n"
-                "            # Chercher en priorité des marqueurs de définition\n"
-                "            for marker in definition_markers:\n"
-                "                if marker in doc_lower:\n"
-                "                    relevant_info += doc\n"
-                "                    definition_found = True\n"
-                "                    break\n"
-                "            \n"
-                "            # Si aucun marqueur trouvé mais contient quand même les termes cherchés\n"
-                "            if not definition_found:\n"
-                "                relevant_info += doc\n"
+                "        # Analyser si ce document contient des informations pertinentes\n"
+                "        if \"terme recherché\" in doc.lower():\n"
+                "            relevant_info += doc\n"
                 "    \n"
                 "    if relevant_info:\n"
                 "        return f\"D'après le document indexé, {relevant_info}\"\n"
                 "    else:\n"
                 "        # Si rien trouvé, essayer une autre requête\n"
-                "        backup_results = retriever(query=\"what are tokenised deposits\", additional_notes=\"looking for explanation or description\")\n"
+                "        backup_results = retriever(query=\"autre formulation de recherche\", additional_notes=\"contexte supplémentaire\")\n"
                 "        \n"
                 "        if backup_results and \"Retrieved documents:\" in backup_results:\n"
                 "            backup_docs = backup_results.split(\"===== Document\")\n"
                 "            for doc in backup_docs[1:]:  # Skip the first empty element\n"
-                "                if \"tokenised deposits\" in doc.lower() or \"tokenized deposits\" in doc.lower():\n"
+                "                if \"terme recherché\" in doc.lower():\n"
                 "                    return f\"D'après le document indexé avec requête alternative, {doc}\"\n"
                 "        \n"
                 "        return \"Je n'ai pas trouvé d'informations spécifiques sur ce sujet dans le document indexé.\"\n"
@@ -269,6 +251,7 @@ class DelegateTool(Tool):
         try:
             # Approche simplifiée: Utiliser les agents depuis un import explicite
             import streamlit as st
+            import os
             
             if not hasattr(st, "session_state") or "agents" not in st.session_state:
                 print("Erreur: session_state.agents n'est pas disponible")
@@ -276,7 +259,7 @@ class DelegateTool(Tool):
             
             agents = st.session_state.agents
             print(f"Agents disponibles: {list(agents.keys())}")
-            
+        
             if agent_name not in agents or agents[agent_name] is None:
                 print(f"Erreur: Agent '{agent_name}' non disponible")
                 return f"Erreur: Agent '{agent_name}' non disponible. Agents disponibles: {list(agents.keys())}"
@@ -284,24 +267,121 @@ class DelegateTool(Tool):
             agent = agents[agent_name]
             print(f"Agent '{agent_name}' trouvé de type {type(agent).__name__}")
             
+            # Signaler quel agent est actuellement utilisé (pour l'affichage dans le statut)
+            st.session_state.current_agent = agent_name
+            
             # Exécuter l'agent approprié
             if agent_name == "rag_agent":
                 print("Exécution du rag_agent")
-                result = agent.run(user_query)
-                print(f"Résultat du rag_agent: {result[:100]}...")
-                return result
+                try:
+                    # Vérifier que le vectordb est configuré
+                    from managed_agent.retriever_tool import get_vectordb
+                    vectordb = get_vectordb()
+                    print(f"⭐ RAG Agent vectordb configured: {vectordb is not None}")
+                    
+                    # Ajouter des logs pour le statut
+                    if hasattr(st, "session_state") and "status_placeholder" in st.session_state:
+                        st.session_state.status_placeholder.markdown(f"_🔍 Agent RAG en cours d'exécution pour la requête: \"{user_query}\"_")
+                    
+                    # Exécuter l'agent
+                    result = agent.run(user_query)
+                    print(f"Résultat du rag_agent (début): {result[:100]}...")
+                    print(f"Résultat du rag_agent (fin): ...{result[-100:] if len(result) > 100 else result}")
+                    print(f"Longueur du résultat: {len(result)}")
+                    
+                    # FORCER l'inclusion des sources - ajout d'un intercepteur pour vérifier si le résultat
+                    # contient déjà une section de sources, et en ajouter une si ce n'est pas le cas
+                    has_sources = any(marker in result for marker in ["Sources documentaires", "📚", "DEBUT_SOURCES"])
+                    
+                    # Si le résultat ne contient pas de section de sources, essayer d'en ajouter une
+                    if not has_sources:
+                        print("❗ Le résultat ne contient pas de section de sources, nous allons en ajouter une!")
+                        try:
+                            # Accéder directement à la base de données vectorielle
+                            from managed_agent.retriever_tool import get_vectordb
+                            vectordb = get_vectordb()
+                            
+                            if vectordb is not None:
+                                # Effectuer une recherche pour obtenir les documents les plus pertinents
+                                documents = vectordb.similarity_search(user_query, k=3)
+                                
+                                if documents:
+                                    # Extraire les métadonnées des documents pour créer une section de sources
+                                    sources_info = {}
+                                    for doc in documents:
+                                        metadata = getattr(doc, 'metadata', {}) or {}
+                                        source = metadata.get('source', 'Unknown source')
+                                        page = metadata.get('page', 'Unknown page')
+                                        
+                                        # Extraire le nom du fichier
+                                        source_name = os.path.basename(source) if isinstance(source, str) else "Document inconnu"
+                                        
+                                        # Regrouper par source
+                                        if source_name not in sources_info:
+                                            sources_info[source_name] = set()
+                                        sources_info[source_name].add(str(page))
+                                    
+                                    # Formater les sources pour l'affichage
+                                    sources_lines = []
+                                    for source_name, pages in sources_info.items():
+                                        # Trier les pages numériquement
+                                        page_list = sorted(pages, key=lambda x: int(x) if x.isdigit() else x)
+                                        page_str = ", ".join(page_list)
+                                        sources_lines.append(f"• **{source_name}** - Pages: {page_str}")
+                                    
+                                    # Créer la section de sources
+                                    sources_section = "\n\n---\n### 📚 Sources documentaires:\n" + "\n".join(sources_lines)
+                                    
+                                    # Ajouter la section à la fin du résultat
+                                    result = result + sources_section
+                                    
+                                    # Sauvegarder les sources pour affichage dans le statut
+                                    st.session_state.rag_sources = [f"{source_name} (pages: {', '.join(sorted(pages, key=lambda x: int(x) if x.isdigit() else x))})" 
+                                                              for source_name, pages in sources_info.items()]
+                                    print(f"Sources ajoutées manuellement: {sources_section[:100]}...")
+                        except Exception as e:
+                            print(f"Erreur lors de l'ajout forcé des sources: {e}")
+                            import traceback
+                            print(f"TRACEBACK: {traceback.format_exc()}")
+                            # Ne pas faire échouer l'exécution si l'ajout forcé échoue
+                    
+                    # Vérifier si le résultat contient la section des sources après les ajouts forcés
+                    has_sources_section = "Sources documentaires" in result
+                    print(f"Le résultat contient-il maintenant une section sources? {has_sources_section}")
+                    
+                    return result
+                except Exception as e:
+                    print(f"❌ ERROR in rag_agent execution: {e}")
+                    import traceback
+                    print(f"TRACEBACK: {traceback.format_exc()}")
+                    return f"Erreur lors de l'exécution du rag_agent: {e}"
             elif agent_name == "search_agent":
                 print("Exécution du search_agent")
+                
+                # Ajouter des logs pour le statut
+                if hasattr(st, "session_state") and "status_placeholder" in st.session_state:
+                    st.session_state.status_placeholder.markdown(f"_🔍 Agent de Recherche Web en cours d'exécution pour la requête: \"{user_query}\"_")
+                
                 result = agent.run(user_query)
                 print(f"Résultat du search_agent: {result[:100]}...")
                 return result
             elif agent_name == "data_analyst":
                 print("Exécution du data_analyst")
+                
+                # Ajouter des logs pour le statut
+                if hasattr(st, "session_state") and "status_placeholder" in st.session_state:
+                    st.session_state.status_placeholder.markdown(f"_📊 Agent d'Analyse de Données en cours d'exécution pour la requête: \"{user_query}\"_")
+                
                 csv_args = None
                 # Récupérer les csv_args depuis st.session_state si disponibles
                 for file_id, details in st.session_state.processed_files.items():
                     if details.get('type') == 'csv' and details.get('status') == 'ready':
                         csv_args = details.get('csv_args')
+                        
+                        # Ajouter le nom du fichier CSV au statut
+                        if hasattr(st, "session_state") and "status_placeholder" in st.session_state:
+                            filename = details.get('filename', 'CSV sans nom')
+                            st.session_state.status_placeholder.markdown(f"_📊 Analyse du fichier CSV: {filename}_")
                         break
                 
                 if csv_args:
