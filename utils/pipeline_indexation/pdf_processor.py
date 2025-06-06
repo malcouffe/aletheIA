@@ -24,11 +24,9 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # -------- CONFIGURATION --------
 MISTRAL_API_KEY = os.environ["MISTRAL_API_KEY"]
-print("Clé Mistral :", MISTRAL_API_KEY)
 
-# Dossiers de stockage temporaires pour l'indexation
 IMAGE_DIR = "data/output/images"
-TABLE_DIR = "data/output/tables"  # Dossier dédié aux tableaux
+TABLE_DIR = "data/output/tables" 
 EXPORT_BASE_DIR = "data/output"
 for d in [IMAGE_DIR, TABLE_DIR, EXPORT_BASE_DIR]:
     os.makedirs(d, exist_ok=True)
@@ -37,9 +35,6 @@ CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-
-# DB_PATH will now be passed as an argument
-
 
 # -------- FONCTION PRINCIPALE --------
 
@@ -67,8 +62,9 @@ def analyser_pdf(chemin_pdf, db_path: str, exporter=True):
     tableaux = detecter_tableaux(resultat_ocr)
     metadonnees = extraire_metadonnees(resultat_ocr, chemin_pdf)
 
-    # 3. Découpage du texte
-    chunks = decouper_texte(texte)
+    # 3. Découpage du texte avec tracking des pages
+    chunks_avec_pages = decouper_texte_avec_pages(resultat_ocr)
+    chunks = [chunk_info['content'] for chunk_info in chunks_avec_pages]
 
     # 4. Calcul des embeddings
     modele_embeddings = SentenceTransformer(EMBEDDING_MODEL)
@@ -80,7 +76,7 @@ def analyser_pdf(chemin_pdf, db_path: str, exporter=True):
     stock_ids = stocker_dans_base_vectorielle(
         db_path,
         chemin_pdf,
-        chunks, emb_text,
+        chunks, emb_text, chunks_avec_pages,
         images, emb_imgs,
         tableaux, emb_tabs,
         metadonnees
@@ -313,6 +309,55 @@ def decouper_texte(texte):
     return chunks
 
 
+def decouper_texte_avec_pages(resultat_ocr):
+    """
+    Découpe le texte en chunks en gardant l'information de la page d'origine.
+    
+    Args:
+        resultat_ocr: Résultat de l'OCR avec les pages
+        
+    Returns:
+        List[dict]: Liste de dictionnaires avec 'content' et 'page_info'
+    """
+    print(f"Découpage du texte avec tracking des pages (taille={CHUNK_SIZE}, chevauchement={CHUNK_OVERLAP})...")
+    
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""]
+    )
+    
+    chunks_avec_pages = []
+    
+    for page_idx, page in enumerate(resultat_ocr.pages, 1):
+        if not page.markdown:
+            continue
+            
+        # Nettoyer le texte de la page
+        page_text = page.markdown
+        page_text = re.sub(r'!\[.*?\]\(.*?\)', '', page_text)  # Supprimer les références d'images
+        page_text = re.sub(r'\n{3,}', '\n\n', page_text)  # Normaliser les sauts de ligne
+        page_text = page_text.strip()
+        
+        if not page_text:
+            continue
+            
+        # Découper le texte de cette page en chunks
+        page_chunks = splitter.split_text(page_text)
+        
+        # Ajouter les chunks avec l'info de page
+        for chunk_idx, chunk in enumerate(page_chunks):
+            chunks_avec_pages.append({
+                'content': chunk,
+                'page_number': page_idx,
+                'chunk_in_page': chunk_idx,
+                'total_chunks_in_page': len(page_chunks)
+            })
+    
+    print(f"  Texte découpé en {len(chunks_avec_pages)} chunks avec information de page")
+    return chunks_avec_pages
+
+
 # -------- EMBEDDINGS --------
 
 def generer_embeddings(modele, textes):
@@ -337,7 +382,7 @@ def generer_embeddings_images(modele, elements, est_tableau=False):
 
 # -------- STOCKAGE VECTORIEL --------
 
-def stocker_dans_base_vectorielle(db_path: str, chemin_pdf, chunks, emb_textes, images, emb_images, tableaux, emb_tableaux, metadonnees):
+def stocker_dans_base_vectorielle(db_path: str, chemin_pdf, chunks, emb_textes, chunks_avec_pages, images, emb_images, tableaux, emb_tableaux, metadonnees):
     print("Stockage dans la base vectorielle...")
     # Ensure the directory exists before creating the client
     os.makedirs(db_path, exist_ok=True)
@@ -354,8 +399,8 @@ def stocker_dans_base_vectorielle(db_path: str, chemin_pdf, chunks, emb_textes, 
     nom_fichier = os.path.basename(chemin_pdf)
     all_ids = []
 
-    # 1) Indexation du texte
-    for i, (chunk, emb) in enumerate(zip(chunks, emb_textes)):
+    # 1) Indexation du texte avec informations de page
+    for i, (chunk, emb, chunk_info) in enumerate(zip(chunks, emb_textes, chunks_avec_pages)):
         doc_id = f"{pdf_id}_txt_{i}"
         all_ids.append(doc_id)
         meta = {
@@ -363,7 +408,10 @@ def stocker_dans_base_vectorielle(db_path: str, chemin_pdf, chunks, emb_textes, 
             "filename": nom_fichier,
             "type": "text",
             "chunk_index": i,
-            "chunk_count": len(chunks)
+            "chunk_count": len(chunks),
+            "page": chunk_info['page_number'],
+            "chunk_in_page": chunk_info['chunk_in_page'],
+            "total_chunks_in_page": chunk_info['total_chunks_in_page']
         }
         meta.update({f"doc_{k}": v for k, v in metadonnees.items()})
         collection.add(
