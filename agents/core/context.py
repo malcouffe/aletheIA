@@ -92,22 +92,15 @@ def prepare_manager_context(
     Returns:
         Context dictionary for additional_args
     """
-    print(f"🔍 DEBUG prepare_manager_context:")
-    print(f"  - PDF context input: {available_pdfs_context}")
-    print(f"  - CSV context input: {available_csvs_context}")
-    
     manager = ContextManager()
     
     if available_pdfs_context:
-        print(f"  - Setting PDF context with {len(available_pdfs_context)} files")
         manager.set_pdf_context(available_pdfs_context)
     
     if available_csvs_context:
-        print(f"  - Setting CSV context with {len(available_csvs_context)} files")
         manager.set_csv_context(available_csvs_context)
     
     context = manager.get_context_dict()
-    print(f"  - Final context: {context}")
     
     return context
 

@@ -7,10 +7,13 @@ from .rag_tools import (
     search_pdf_documents, search_pdf_with_context, search_pdf_from_state,
     extract_pdf_context_and_delegate, get_citation_help
 )
+from .context_access_tools import (
+    check_context_availability, demonstrate_context_access, validate_context_structure
+)
 
-# Import web tools from enhanced_web_tools (check correct path)
+# Import web tools from enhanced_web_tools (now in tools folder)
 try:
-    from ..enhanced_web_tools import enhanced_visit_webpage, bulk_visit_webpages, extract_financial_data
+    from .enhanced_web_tools import enhanced_visit_webpage, bulk_visit_webpages, extract_financial_data
 except ImportError:
     # If enhanced_web_tools doesn't exist, provide fallback
     print("Warning: enhanced_web_tools not found, skipping web tools import")
@@ -31,6 +34,11 @@ __all__ = [
     'search_pdf_from_state',
     'extract_pdf_context_and_delegate',
     'get_citation_help',
+    
+    # Context access tools
+    'check_context_availability',
+    'demonstrate_context_access',
+    'validate_context_structure',
 ]
 
 # Add web tools if available
