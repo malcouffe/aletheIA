@@ -4,7 +4,7 @@ Creates only Manager Agent (with all tools) and Data Analyst Agent.
 """
 
 import streamlit as st
-from smolagents import CodeAgent, DuckDuckGoSearchTool, OpenAIServerModel
+from smolagents import CodeAgent, DuckDuckGoSearchTool, OpenAIServerModel, tool
 from typing import Optional
 
 from ..config.agent_config import AGENT_CONFIGS, AGENT_DESCRIPTIONS
@@ -28,6 +28,44 @@ class SimplifiedAgentFactory:
         """Create a data analyst agent with visualization capabilities."""
         config = AGENT_CONFIGS["data_analyst"]
         
+        # Detailed description following smolagents best practices
+        data_analyst_description = """Expert data analyst specialized in comprehensive data analysis and visualization.
+
+CORE CAPABILITIES:
+- **Data Loading & Processing**: Load CSV files, clean data, handle missing values
+- **Statistical Analysis**: Descriptive statistics, correlations, hypothesis testing
+- **Data Visualization**: Create plots with matplotlib, seaborn, and plotly
+- **Advanced Analytics**: Clustering, classification, regression analysis
+- **Data Transformation**: Grouping, pivoting, merging datasets
+
+AVAILABLE TOOLS:
+- load_csv_data(): Load and examine CSV files with pandas
+- discover_data_files(): Find available data files in the workspace
+- display_matplotlib_figures(): Show matplotlib plots to user
+- display_plotly_figures(): Show interactive plotly visualizations
+
+AUTHORIZED LIBRARIES:
+pandas, numpy, matplotlib, seaborn, plotly, scipy, sklearn, datetime, statistics
+
+TASK HANDLING APPROACH:
+1. Always start by understanding the data structure
+2. Perform exploratory data analysis (EDA)
+3. Apply appropriate statistical methods
+4. Create clear, informative visualizations
+5. Provide actionable insights and conclusions
+
+IMPORTANT EXECUTION NOTES:
+- Use print() statements to log progress and findings
+- Always explain statistical results in plain language
+- Create multiple visualization types when relevant
+- Handle data quality issues proactively
+- Respond in natural, conversational French
+
+Example task handling:
+- "Analyze sales data" → Load data, examine columns, create summary statistics, plot trends
+- "Compare categories" → Group by category, calculate metrics, create comparison charts
+- "Find patterns" → Apply statistical tests, create correlation matrices, identify outliers"""
+
         agent = CodeAgent(
             tools=[display_matplotlib_figures, display_plotly_figures, load_csv_data, discover_data_files],
             model=self.model,
@@ -44,187 +82,126 @@ class SimplifiedAgentFactory:
             max_steps=config.max_steps,
             verbosity_level=config.verbosity_level,
             name="data_analyst",
-            description=AGENT_DESCRIPTIONS["data_analyst"],
+            description=data_analyst_description,  # Much more detailed description
             stream_outputs=config.stream_outputs,
             planning_interval=config.planning_interval
         )
         
-        print(f"✅ Data analyst agent created successfully")
+        print(f"✅ Data analyst agent created successfully with detailed capabilities")
         return agent
 
     def create_enhanced_manager_agent(self, data_analyst_agent: CodeAgent) -> CodeAgent:
-        """Create an enhanced manager agent with all tools (web, RAG, delegation)."""
+        """Create an enhanced manager agent with proper smolagent delegation."""
         config = AGENT_CONFIGS["manager_agent"]
         
-        # Combine all tools: web tools, RAG tools
-        all_tools = []
+        # Simplified tools: ONLY essential coordination tools
+        coordination_tools = []
         
-        # Add web search tools
+        # Add only web search tools for coordination (not the agent's direct use)
         try:
             search_tool = DuckDuckGoSearchTool()
-            all_tools.extend([
+            coordination_tools.extend([
                 search_tool,
                 enhanced_visit_webpage,
-                bulk_visit_webpages, 
-                extract_financial_data
+                bulk_visit_webpages
             ])
-            print("✅ Web search tools added to manager")
+            print("✅ Web coordination tools added to manager")
         except ImportError as ie:
-            print(f"⚠️ Web search tools unavailable: {ie}")
+            print(f"⚠️ Web tools unavailable: {ie}")
         
-        # Add RAG tools
+        # Add RAG tools for direct document access (manager's responsibility)
         try:
-            all_tools.extend([
-                search_pdf_from_state, 
-                search_pdf_with_context, 
+            coordination_tools.extend([
                 search_pdf_documents,
+                search_pdf_with_context,
+                search_pdf_from_state,
                 get_citation_help
             ])
             print("✅ RAG tools added to manager")
         except Exception as e:
             print(f"⚠️ RAG tools partially unavailable: {e}")
         
-        # Add context access tools for debugging and guidance
-        try:
-            all_tools.extend([
-                check_context_availability,
-                demonstrate_context_access,
-                validate_context_structure
-            ])
-            print("✅ Context access tools added to manager")
-        except Exception as e:
-            print(f"⚠️ Context access tools unavailable: {e}")
-        
-        # Create enhanced manager description
-        enhanced_description = """Expert task manager with comprehensive capabilities.
+        # Enhanced manager description following smolagent best practices
+        manager_description = """Expert coordination agent with clear delegation rules.
 
-CORE CAPABILITIES:
-1. **Direct Web Research**: Enhanced web search and content extraction
-2. **Document Analysis**: PDF search and retrieval using RAG
-3. **Data Analysis Delegation**: Delegate complex data tasks to data_analyst
+DELEGATION STRATEGY :
+1. **ALWAYS delegate data analysis tasks** to data_analyst
+   - Keywords: CSV, data, analysis, visualization, pandas, plotting, charts, graphs, statistics
+   - Keywords: correlation, regression, clustering, EDA, exploratory, trends, patterns
+   - Keywords: matplotlib, seaborn, plotly, dataframe, dataset, metrics
+   - Usage: data_analyst(task="Detailed description including: data source, analysis goals, specific visualizations needed, and expected insights")
+   
+   DELEGATION EXAMPLES:
+   ✅ "data_analyst(task='Load the sales.csv file, perform exploratory data analysis, create trend visualizations by month, and identify top-performing categories')"
+   ✅ "data_analyst(task='Analyze customer data: calculate descriptive statistics, create correlation matrix, identify outliers, and visualize distributions')"
+   ❌ Never attempt: "Let me load this CSV file myself" - ALWAYS delegate
 
-AVAILABLE TOOLS:
-- Web: DuckDuckGoSearchTool, enhanced_visit_webpage, bulk_visit_webpages, extract_financial_data
-- RAG: search_pdf_from_state, search_pdf_with_context, search_pdf_documents, get_citation_help
-- Context: check_context_availability, demonstrate_context_access, validate_context_structure
-- Delegation: data_analyst agent for CSV analysis and visualizations
+2. **Handle document queries directly** using RAG tools
+   - Use search_pdf_with_context() for document searches
+   - Use get_citation_help() for references
+
+3. **Handle web research directly** using web tools  
+   - Use DuckDuckGoSearchTool() for searches
+   - Use enhanced_visit_webpage() for page content
 
 CRITICAL DELEGATION RULES:
-1. **ALWAYS DELEGATE DATA ANALYSIS** → to data_analyst:
-   - Keywords: "analyser", "dataset", "CSV", "données", "visualisation", "graphique", "statistiques", "tableau", "colonnes", "lignes", "tendance", "corrélation", "moyenne", "médiane", "distribution"
-   - **MANDATORY FIRST STEP**: Check for CSV context and delegate immediately
-   - Pattern:
-     ```python
-     # Check for CSV context first
-     print("🔍 Checking for CSV context...")
-     csv_available = 'csv_context' in globals()
-     print(f"CSV context available: {csv_available}")
-     
-     if csv_available:
-         csv_context = globals()['csv_context']
-         print(f"📊 Found {csv_context.get('count', 0)} CSV files")
-         # ALWAYS delegate CSV tasks with full context
-         result = data_analyst(f"CSV CONTEXT: {csv_context}\n\nUSER REQUEST: {user_query}")
-     else:
-         print("⚠️ No CSV context found - delegating anyway")
-         result = data_analyst(user_query)
-     
-     final_answer(result)
-     ```
+- ANY data/CSV/statistical task → MUST delegate to data_analyst with very detailed instructions
+- Be extremely specific in delegation: mention data source, analysis type, visualization needs
+- The data_analyst has comprehensive capabilities: pandas, numpy, matplotlib, seaborn, plotly, scipy, sklearn
+- Never attempt data analysis yourself - data_analyst is the expert
+- Provide context and expected outcomes when delegating
+- Respond in natural, conversational French
 
-2. **PDF/Document Questions** → use RAG tools directly:
-    - Keywords: "document", "PDF", "rechercher dans", "contenu du fichier"
-    - Pattern:
-      ```python
-      # Check for PDF context
-      print("🔍 Checking for PDF context...")
-      pdf_available = 'pdf_context' in globals()
-      
-      if pdf_available:
-          pdf_context = globals()['pdf_context']
-          print(f"📄 Found {pdf_context.get('count', 0)} PDF files")
-          result = search_pdf_with_context(user_query, pdf_context)
-      else:
-          print("⚠️ No PDF context - using state search")
-          result = search_pdf_from_state(user_query)
-      final_answer(result)
-      ```
+Remember: Proper delegation with detailed instructions reduces errors and improves efficiency per smolagents principles."""
 
-3. **Web Research** → use web tools directly:
-    - Keywords: "rechercher sur internet", "informations récentes", "actualités"
-    - Use DuckDuckGoSearchTool for search, then enhanced_visit_webpage for details
-
-MANDATORY CONTEXT CHECK PATTERN:
-Before ANY action, always check context:
-```python
-# ALWAYS start with context check
-print("🔍 CONTEXT CHECK:")
-print("Available variables:", [k for k in globals().keys() if not k.startswith('_')])
-
-csv_available = 'csv_context' in globals()
-pdf_available = 'pdf_context' in globals()
-
-print(f"📊 CSV context: {csv_available}")
-print(f"📄 PDF context: {pdf_available}")
-
-# For ANY data-related keywords → IMMEDIATE delegation
-data_keywords = ['analyser', 'dataset', 'csv', 'données', 'visualisation', 'graphique', 'statistiques', 'tableau', 'colonnes', 'lignes', 'tendance', 'corrélation', 'moyenne', 'médiane', 'distribution', 'plot', 'chart']
-needs_data_analysis = any(keyword.lower() in user_query.lower() for keyword in data_keywords)
-
-if needs_data_analysis or csv_available:
-    print("🎯 DELEGATING TO DATA ANALYST")
-    if csv_available:
-        csv_context = globals()['csv_context']
-        result = data_analyst(f"CSV CONTEXT: {csv_context}\n\nUSER REQUEST: {user_query}")
-    else:
-        result = data_analyst(user_query)
-    final_answer(result)
-```
-
-RESPONSE STYLE:
-Always respond in natural, conversational French. Synthesize information from multiple sources when relevant."""
-
-        # Create the enhanced manager agent
+        # Create the manager agent with proper smolagent delegation
         manager_agent = CodeAgent(
-            tools=all_tools,
+            tools=coordination_tools,  # Simplified tool set
             model=self.model,
-            managed_agents=[data_analyst_agent],  # Only manage data analyst now
-            name="enhanced_manager_agent",
-            description=enhanced_description,
+            managed_agents=[data_analyst_agent],  # Correct smolagent delegation
+            name="coordination_manager", 
+            description=manager_description,
             stream_outputs=config.stream_outputs,
-            max_steps=config.max_steps + 5,  # Slightly more steps since it does more work
+            max_steps=config.max_steps,  # Reduced steps due to delegation
             verbosity_level=config.verbosity_level,
             planning_interval=config.planning_interval,
             additional_authorized_imports=[
-                "json", "re", "urllib.parse", "requests", "concurrent.futures",
+                "json", "re", "urllib.parse", "requests",
                 "os", "langchain_community.vectorstores"
             ]
         )
         
-        print(f"✅ Enhanced manager agent created with {len(all_tools)} tools")
+        print(f"✅ Coordination manager created with {len(coordination_tools)} tools and 1 managed agent")
         return manager_agent
 
 
 def create_simplified_agent_system(model: OpenAIServerModel) -> tuple[CodeAgent, CodeAgent]:
     """
-    Create a simplified agent system with enhanced manager and data analyst.
+    Create a simplified agent system following smolagents best practices.
+    
+    SMOLAGENTS COMPLIANCE:
+    - Uses managed_agents parameter for proper delegation
+    - Manager has minimal tools to reduce LLM calls 
+    - Clear delegation rules in system prompt
+    - Specialized agents for specific tasks
     
     Args:
         model: The OpenAI model to use for all agents
         
     Returns:
-        Tuple of (enhanced_manager_agent, data_analyst_agent)
+        Tuple of (coordination_manager, data_analyst_agent)
     """
     factory = SimplifiedAgentFactory(model)
     
-    # Create data analyst agent first
+    # Create specialized data analyst agent first
     data_analyst_agent = factory.create_data_analyst_agent()
     
-    # Create enhanced manager agent with all tools
-    enhanced_manager_agent = factory.create_enhanced_manager_agent(data_analyst_agent)
+    # Create coordination manager with proper smolagent delegation
+    coordination_manager = factory.create_enhanced_manager_agent(data_analyst_agent)
     
-    print("🚀 Simplified agent system created successfully!")
-    print(f"   - Enhanced Manager: {len(enhanced_manager_agent.tools)} tools")
-    print(f"   - Data Analyst: {len(data_analyst_agent.tools)} tools")
+    print("🚀 Smolagents-compliant system created successfully!")
+    print(f"   - Coordination Manager: {len(coordination_manager.tools)} tools + 1 managed agent")
+    print(f"   - Data Analyst: {len(data_analyst_agent.tools)} specialized tools")
+    print("   - Follows smolagents best practices for delegation and simplicity")
     
-    return enhanced_manager_agent, data_analyst_agent 
+    return coordination_manager, data_analyst_agent 
