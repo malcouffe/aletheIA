@@ -203,6 +203,7 @@ SYNTHESIS GUIDELINES:
         # Use ToolCallingAgent for web search as it's more suitable for single-timeline tasks
         web_tools = []
         try:
+            # Configuration simple sans paramètres pour éviter les erreurs
             search_tool = DuckDuckGoSearchTool()
             web_tools.extend([
                 search_tool,
@@ -212,6 +213,14 @@ SYNTHESIS GUIDELINES:
             ])
         except ImportError as e:
             print(f"⚠️ Some web tools unavailable: {e}")
+        except Exception as e:
+            print(f"⚠️ DuckDuckGo tool configuration issue: {e}")
+            # Fallback sans DuckDuckGo si problème
+            web_tools.extend([
+                enhanced_visit_webpage,
+                bulk_visit_webpages,
+                extract_financial_data
+            ])
 
         agent = ToolCallingAgent(
             tools=web_tools,
