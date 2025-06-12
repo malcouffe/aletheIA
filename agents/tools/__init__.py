@@ -3,15 +3,7 @@ Tools module for agent system
 """
 
 from .visualization_tools import display_matplotlib_figures, display_plotly_figures, load_csv_data, discover_data_files
-from .rag_tools import (
-    search_pdf_for_streamlit, search_pdf_with_context_for_streamlit, 
-    search_pdf_interactive, smart_pdf_search_for_streamlit, display_source_passages,
-    get_citation_help, diagnose_pdf_context, validate_source_display_before_final_answer,
-    unified_pdf_search_and_analyze
-)
-from .context_access_tools import (
-    check_context_availability, demonstrate_context_access, validate_context_structure
-)
+from .rag_tools import unified_pdf_search_and_analyze
 
 try:
     from .enhanced_web_tools import enhanced_visit_webpage, bulk_visit_webpages, extract_financial_data
@@ -29,26 +21,8 @@ __all__ = [
     'load_csv_data',
     'discover_data_files',
     
-    # RAG tools (Streamlit optimized)
-    'search_pdf_for_streamlit',
-    'search_pdf_with_context_for_streamlit',
-    'search_pdf_interactive', 
-    'smart_pdf_search_for_streamlit', 
-    'display_source_passages',  # MANDATORY: Display in Streamlit UI
-    'get_citation_help',
-    'diagnose_pdf_context',
-    'validate_source_display_before_final_answer',
-    'unified_pdf_search_and_analyze',  # Simplified unified tool
-    
-    # Context access tools 
-    'check_context_availability',
-    'demonstrate_context_access',
-    'validate_context_structure',
-    
-    # Web tools
-    'enhanced_visit_webpage',
-    'bulk_visit_webpages', 
-    'extract_financial_data'
+    # RAG tools (unified tool only)
+    'unified_pdf_search_and_analyze'
 ]
 
 # Add web tools if available

@@ -6,7 +6,16 @@ import uuid
 import torch
 import traceback
 import os
+import logging
 from smolagents import OpenAIServerModel
+
+# Configure logging to suppress HTTP/API debug logs but keep RAG functionality visible
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("openai._base_client").setLevel(logging.WARNING)
+logging.getLogger("httpcore.http11").setLevel(logging.WARNING) 
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+logging.getLogger("smolagents").setLevel(logging.WARNING)
 
 # Import from new modular structure
 from config.settings import SUPPORTED_FILE_TYPES
@@ -18,6 +27,7 @@ from ui.chat import display_chat_interface
 from ui.components import handle_uploaded_file
 from ui.state_sync import sync_file_status
 from ui.realtime_notifications import create_status_toast
+
 
 # Import from multi-agent architecture
 from agents import MultiAgentManager

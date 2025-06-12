@@ -4,7 +4,12 @@ Chat interface functionality for handling user interactions.
 import streamlit as st
 import time
 import datetime
-from .rag_display import display_structured_rag_response
+import pandas as pd
+from typing import Dict, List, Optional, Any
+from agents.agent_manager_multiagent import MultiAgentManager
+from .rag_display import display_structured_rag_response, display_notebooklm_response
+from agents.tools.rag_tools import get_last_rag_sources, _clear_session_sources
+import re
 
 
 def display_chat_interface(model, agent_manager):
@@ -135,26 +140,64 @@ def _process_user_query(prompt, model, agent_manager, response_container=None):
         
         # Use the new clean AgentManager interface
         final_response = agent_manager.run_query(
-            prompt,  # user query
-            available_pdfs_context,
-            available_csvs_context
+            user_query=prompt,
+            available_pdfs_context=available_pdfs_context,
+            available_csvs_context=available_csvs_context
         )
         
         # Clear progress indicator
         if response_container:
             progress_placeholder.empty()
         
-        # Convert non-string responses to string
-        if not isinstance(final_response, str):
-            final_response = str(final_response)
-            
+        # 🆕 PRIORITÉ 1: Post-traitement avec cache des sources (bypass total de l'agent)
+        print(f"🚀 Sources Processing: Starting post-processing pipeline...")
+        
+        clean_response, sources_displayed = _process_agent_response_with_sources(final_response, prompt)
+        
+        if sources_displayed:
+            print(f"✅ Sources Processing: Sources successfully displayed via cache system")
+            return clean_response
+        
+        print(f"🔄 Sources Processing: No cached sources found, proceeding with fallback detection...")
+        
+        # Use the cleaned response for further processing
+        final_response = clean_response
+        
+        # Try to display as structured RAG response first
+        try:
+            if display_structured_rag_response(final_response, prompt):
+                return final_response
+        except Exception as e:
+            print(f"⚠️ DEBUG: Error in display_structured_rag_response fallback: {e}")
+        
+        # 🆕 FALLBACK: Essayer de détecter manuellement les réponses RAG
+        print(f"🔄 DEBUG Fallback: Checking for RAG patterns manually...")
+        
+        # Détecter les citations [1], [2], etc.
+        citations_found = bool(re.search(r'\[\d+\]', final_response))
+        # Détecter les blocs JSON
+        json_found = bool(re.search(r'```json\s*\n.*?\n```', final_response, re.DOTALL))
+        
+        print(f"🔍 DEBUG Fallback: Citations found: {citations_found}")
+        print(f"🔍 DEBUG Fallback: JSON block found: {json_found}")
+        
+        if citations_found and json_found:
+            print(f"🎯 DEBUG Fallback: Manual RAG detection successful!")
+            try:
+                if display_structured_rag_response(final_response, prompt):
+                    print(f"✅ DEBUG Fallback: Successfully displayed via manual detection")
+                    return final_response
+                else:
+                    print(f"⚠️ DEBUG Fallback: display_structured_rag_response returned False")
+            except Exception as e:
+                print(f"❌ DEBUG Fallback: Error in manual RAG display: {e}")
+        
         return final_response
         
     except Exception as e:
-        error_response = f"❌ **Erreur lors de l'exécution de l'agent:**\n\n```\n{str(e)}\n```"
-        if response_container:
-            st.error(f"Erreur: {str(e)}")
-        return error_response
+        error_msg = f"Erreur lors du traitement de la requête: {str(e)}"
+        print(f"❌ Error in _process_user_query: {error_msg}")
+        return error_msg
 
 
 def _format_agent_response(response):
@@ -244,3 +287,50 @@ def _prepare_context():
             available_csvs_context.append(csv_context)
     
     return available_pdfs_context, available_csvs_context 
+
+
+def _process_agent_response_with_sources(agent_response: str, query: str = "") -> tuple[str, bool]:
+    """
+    Post-traitement des réponses d'agent pour extraire et afficher les sources de la session.
+    
+    Args:
+        agent_response: Réponse brute de l'agent
+        query: Requête originale de l'utilisateur
+        
+    Returns:
+        Tuple (response_clean, sources_displayed)
+    """
+    print(f"🔍 Sources Post-Processing: Checking for sources in session...")
+    
+    # Récupérer les sources de la session
+    sources_info = get_last_rag_sources()
+    
+    if sources_info:
+        sources_data = sources_info.get("sources_data")
+        source_query = sources_info.get("query", "")
+        
+        print(f"📦 Sources Post-Processing: Found sources in session for query: '{source_query[:50]}...'")
+        
+        if sources_data:
+            print(f"✅ Sources Post-Processing: Sources loaded successfully")
+            
+            try:
+                # Afficher via l'interface NotebookLM
+                display_notebooklm_response(agent_response, sources_data, query)
+                print(f"🎨 Sources Post-Processing: NotebookLM display successful")
+                
+                # Nettoyer la session
+                _clear_session_sources()
+                
+                return agent_response, True
+                
+            except Exception as e:
+                print(f"❌ Sources Post-Processing: Display error: {e}")
+                # Nettoyer la session même en cas d'erreur
+                _clear_session_sources()
+        else:
+            print(f"⚠️ Sources Post-Processing: No sources data found in session")
+    else:
+        print(f"ℹ️ Sources Post-Processing: No sources found in session")
+    
+    return agent_response, False 

@@ -15,6 +15,12 @@ class MultiAgentManager:
     """
     Multi-agent system following smolagents best practices.
     Manager delegates to specialized agents rather than doing work directly.
+    
+    Architecture:
+    - Manager Agent: Pure delegation, no execution tools
+    - Data Analyst Agent: CSV analysis & visualizations  
+    - Document Agent: PDF search & analysis with unified tool
+    - Search Agent: Web research & information gathering
     """
     
     def __init__(self, model: OpenAIServerModel):
@@ -27,7 +33,7 @@ class MultiAgentManager:
         self.model = model
         self.manager_agent = None
         self.data_analyst_agent = None
-        self.rag_agent = None
+        self.document_agent = None
         self.search_agent = None
         self._initialized = False
     
@@ -40,7 +46,7 @@ class MultiAgentManager:
         (
             self.manager_agent,
             self.data_analyst_agent,
-            self.rag_agent,
+            self.document_agent,
             self.search_agent
         ) = create_multiagent_system(self.model)
         
@@ -49,8 +55,46 @@ class MultiAgentManager:
         print("   Architecture:")
         print("   ├── Manager Agent (minimal tools, coordinates everything)")
         print("   ├── Data Analyst Agent (CSV analysis & visualizations)")
-        print("   ├── RAG Agent (PDF document search & analysis)")
+        print("   ├── Document Agent (document processing)")
         print("   └── Search Agent (web research & information gathering)")
+    
+    def run_task(self, user_query: str, additional_args: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Execute a task using the multi-agent system.
+        Following smolagents best practices with minimal manager coordination.
+        
+        Args:
+            user_query: The user's query/task
+            additional_args: Optional context (PDF, CSV data, etc.)
+            
+        Returns:
+            Response from the appropriate specialist agent
+        """
+        if not self._initialized:
+            raise RuntimeError("Manager not initialized. Call initialize() first.")
+        
+        print(f"🎯 Processing task: {user_query[:100]}...")
+        
+        # Extract context data from additional_args for the context functions
+        pdf_context = additional_args.get('pdf_context', {}) if additional_args else {}
+        csv_context = additional_args.get('csv_context', {}) if additional_args else {}
+        
+        # Extract available_files lists for context preparation
+        available_pdfs_context = pdf_context.get('available_files', []) if pdf_context else []
+        available_csvs_context = csv_context.get('available_files', []) if csv_context else []
+        
+        # Prepare context using the correct format
+        manager_context = prepare_manager_context(available_pdfs_context, available_csvs_context)
+        manager_task = build_simple_manager_task(user_query, available_pdfs_context, available_csvs_context)
+        
+        # Execute via manager (which delegates to specialized agents)  
+        result = self.manager_agent.run(
+            task=manager_task,
+            additional_args=additional_args or {}
+        )
+        
+        print("✅ Task completed successfully!")
+        return result
     
     def run_query(
         self,
@@ -59,7 +103,8 @@ class MultiAgentManager:
         available_csvs_context: Optional[List[Dict]] = None
     ) -> str:
         """
-        Run a user query through the multi-agent system.
+        Legacy method for backward compatibility.
+        Converts old format to new smolagents-compliant format.
         
         Args:
             user_query: The user's question/request
@@ -72,24 +117,23 @@ class MultiAgentManager:
         if not self._initialized:
             self.initialize()
         
-        # Build task description and context properly
-        task = build_simple_manager_task(
-            user_query, 
-            available_pdfs_context, 
-            available_csvs_context
-        )
+        # Convert legacy format to new additional_args format
+        additional_args = {}
         
-        context = prepare_manager_context(
-            available_pdfs_context, 
-            available_csvs_context
-        )
+        if available_pdfs_context:
+            additional_args['pdf_context'] = {
+                'available_files': available_pdfs_context,
+                'count': len(available_pdfs_context)
+            }
+            
+        if available_csvs_context:
+            additional_args['csv_context'] = {
+                'available_files': available_csvs_context,
+                'count': len(available_csvs_context)
+            }
         
-        # The manager will delegate to appropriate specialized agents with proper context
-        return self.manager_agent.run(
-            task=task,
-            additional_args=context,  # Pass the actual context instead of empty dict
-            reset=True  # Fresh start for each query
-        )
+        # Use the new run_task method
+        return self.run_task(user_query, additional_args)
     
     def get_embedding_function(self):
         """Get the shared embedding function."""
@@ -100,7 +144,7 @@ class MultiAgentManager:
         if self._initialized:
             # Reset all agents if they have a reset method
             for agent in [self.manager_agent, self.data_analyst_agent, 
-                         self.rag_agent, self.search_agent]:
+                         self.document_agent, self.search_agent]:
                 if agent and hasattr(agent, 'reset'):
                     agent.reset()
     
@@ -121,9 +165,9 @@ class MultiAgentManager:
                     "name": self.data_analyst_agent.name,
                     "tools_count": len(self.data_analyst_agent.tools)
                 },
-                "rag_agent": {
-                    "name": self.rag_agent.name,
-                    "tools_count": len(self.rag_agent.tools)
+                "document_agent": {
+                    "name": self.document_agent.name,
+                    "tools_count": len(self.document_agent.tools)
                 },
                 "search_agent": {
                     "name": self.search_agent.name,

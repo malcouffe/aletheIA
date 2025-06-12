@@ -8,3 +8,6 @@ pdf_database/
 vectordb
 *.ipynb
 APIKEYS.txt
+
+# Cache temporaire des sources RAG
+data/temp/sources_cache/
