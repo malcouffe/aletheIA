@@ -116,12 +116,7 @@ class ContextManager:
         print(f"✅ Context Manager: Generated {len(context_hints)} context hints")
         return context_hints
     
-    def clear(self):
-        """Clear all context data with debug logging."""
-        print("🧹 Context Manager: Clearing all context data")
-        self.pdf_context = None
-        self.csv_context = None
-        print("✅ Context Manager: Context cleared")
+
 
 
 def prepare_manager_context(
@@ -212,67 +207,4 @@ Route to the appropriate agent and provide a natural, conversational response in
     return task 
 
 
-def test_debug_functionality():
-    """
-    Test function to validate enhanced debug functionality.
-    Following smolagents best practices for comprehensive logging.
-    """
-    print("\n🧪 Debug Test: Starting context management debug test")
-    print("=" * 60)
-    
-    # Test 1: Context Manager initialization
-    print("\n📋 Test 1: Context Manager initialization")
-    manager = ContextManager()
-    
-    # Test 2: PDF context setting
-    print("\n📋 Test 2: PDF context setting")
-    test_pdfs = [
-        {"filename": "rapport_1.pdf", "classification": "Technical", "db_path": "/path/to/db1"},
-        {"filename": "document_2.pdf", "classification": "General", "db_path": "/path/to/db2"}
-    ]
-    manager.set_pdf_context(test_pdfs)
-    
-    # Test 3: CSV context setting
-    print("\n📋 Test 3: CSV context setting")
-    test_csvs = [
-        {"filename": "data_1.csv", "csv_args": {"columns": ["col1", "col2", "col3"]}},
-        {"filename": "data_2.csv", "csv_args": {"columns": ["col1", "col2"]}}
-    ]
-    manager.set_csv_context(test_csvs)
-    
-    # Test 4: Context dictionary generation
-    print("\n📋 Test 4: Context dictionary generation")
-    context_dict = manager.get_context_dict()
-    
-    # Test 5: Context summary generation
-    print("\n📋 Test 5: Context summary generation")
-    context_summary = manager.get_context_summary()
-    
-    # Test 6: Manager context preparation
-    print("\n📋 Test 6: Manager context preparation")
-    manager_context = prepare_manager_context(test_pdfs, test_csvs)
-    
-    # Test 7: Task building
-    print("\n📋 Test 7: Task building")
-    test_query = "Analyse les données du Titanic et recherche des informations complémentaires"
-    task = build_simple_manager_task(test_query, test_pdfs, test_csvs)
-    
-    print("\n✅ Debug Test: All tests completed successfully!")
-    print("🎯 Debug Test: Context management ready for smolagents delegation")
-    print("=" * 60)
-    
-    return {
-        "context_dict": context_dict,
-        "context_summary": context_summary,
-        "manager_context": manager_context,
-        "task": task
-    }
-
-
-if __name__ == "__main__":
-    # Run debug test if script is executed directly
-    test_results = test_debug_functionality()
-    print(f"\n📊 Test Results Summary:")
-    print(f"- Context dict keys: {list(test_results['context_dict'].keys())}")
-    print(f"- Context summary items: {len(test_results['context_summary'])}")
-    print(f"- Task length: {len(test_results['task'])} characters") 
+ 

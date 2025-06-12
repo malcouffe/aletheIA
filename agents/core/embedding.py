@@ -43,10 +43,4 @@ def initialize_embedding_function() -> HuggingFaceEmbeddings:
     )
 
 
-def reset_embedding_function():
-    """
-    Resets the global embedding function instance.
-    Useful for testing or configuration changes.
-    """
-    global _embedding_function
-    _embedding_function = None 
+ 
