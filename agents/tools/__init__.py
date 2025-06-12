@@ -2,7 +2,7 @@
 Tools module for agent system
 """
 
-from .visualization_tools import display_matplotlib_figures, display_plotly_figures, load_csv_data, discover_data_files
+from .visualization_tools import display_matplotlib_figures, display_plotly_figures, load_csv_data, discover_data_files, check_undisplayed_figures
 from .rag_tools import unified_pdf_search_and_analyze
 
 try:
@@ -20,6 +20,7 @@ __all__ = [
     'display_plotly_figures', 
     'load_csv_data',
     'discover_data_files',
+    'check_undisplayed_figures',
     
     # RAG tools (unified tool only)
     'unified_pdf_search_and_analyze'

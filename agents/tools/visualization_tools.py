@@ -13,24 +13,30 @@ from ..config.agent_config import VISUALIZATION_CONFIG
 @tool
 def load_csv_data(file_context: str) -> str:
     """
-    Load CSV data for analysis from the available context.
+    Load CSV data for analysis from available files or directories.
     
-    This tool discovers and loads CSV files from common locations, providing
-    comprehensive data summaries and usage guidance for effective data analysis.
-    Following smolagents best practices: Tools should be functional with detailed logging.
+    Discovers and loads CSV files from common locations with comprehensive data summaries.
+    Provides detailed error reporting for troubleshooting missing or inaccessible files.
     
     Args:
-        file_context: Context information about available CSV files or direct file path.
-                     Can be a filename (e.g., "data.csv") or descriptive text about the data needed.
+        file_context: Filename (e.g., "data.csv") or descriptive text about needed data.
+                     Searches in current directory, data/, and available/ folders.
+                     Use exact filenames for faster loading: "sales_2024.csv"
         
     Returns:
-        Detailed data summary including shape, columns, preview, and loading instructions,
-        or comprehensive error information with suggested solutions.
+        Detailed data summary with shape, columns, preview, and loading instructions.
+        Includes missing values analysis and usage guidance for visualization tools.
+        
+    Error Handling:
+        - "File not found": Check filename spelling and file location
+        - "Permission denied": Verify file access rights
+        - "Invalid CSV format": Ensure file is properly formatted CSV
+        - "Memory error": File too large, consider using pd.read_csv() with chunksize
         
     Usage Examples:
-        - load_csv_data("sales_data.csv")
-        - load_csv_data("financial data")
-        - load_csv_data("any available CSV files")
+        - load_csv_data("titanic.csv")  # Load specific file
+        - load_csv_data("sales data")   # Search for sales-related files
+        - load_csv_data("any CSV files")  # Find any available CSV
     """
 
     
@@ -146,19 +152,25 @@ After creating ANY chart/figure, you MUST immediately use:
 @tool
 def display_matplotlib_figures(figures_dict: dict) -> str:
     """
-    Display matplotlib/seaborn figures in Streamlit interface with comprehensive error handling.
+    Display matplotlib/seaborn figures in Streamlit with memory management.
     
-    This tool safely displays multiple matplotlib figures while managing memory and
-    providing detailed feedback. Following smolagents best practices for clear error reporting.
+    Safely displays multiple matplotlib figures while managing memory and providing
+    detailed feedback. Call IMMEDIATELY after creating any chart for proper display.
     
     Args:
         figures_dict: Dictionary mapping figure names to matplotlib figure objects.
-                     Example: {"correlation_plot": fig1, "histogram": fig2, "scatter_analysis": fig3}
-                     Supports both figure objects and axes objects (automatically converted).
+                     Maximum 10 figures per call to prevent memory issues.
+                     Use descriptive names: {"sales_trend": fig1, "correlation_heatmap": fig2}
         
     Returns:
-        Detailed status message about successfully displayed figures or specific error information
+        Status message about successfully displayed figures or specific error information
         with troubleshooting guidance for failed displays.
+        
+    Error Handling:
+        - "Invalid input": Pass dictionary with figure objects: {"name": matplotlib_figure}
+        - "Too many figures": Split into multiple calls (≤10 figures each)
+        - "Figure conversion failed": Ensure figure objects are valid matplotlib figures
+        - "Display error": Check Streamlit environment and figure validity
         
     Usage Examples:
         # Single figure
@@ -168,12 +180,7 @@ def display_matplotlib_figures(figures_dict: dict) -> str:
         
         # Multiple seaborn figures
         fig1 = sns.heatmap(data).get_figure()
-        fig2 = sns.boxplot(data).get_figure() 
-        display_matplotlib_figures({"heatmap": fig1, "boxplot": fig2})
-        
-        # From axes objects
-        ax = sns.scatterplot(data=df, x='col1', y='col2')
-        display_matplotlib_figures({"scatter": ax.get_figure()})
+        display_matplotlib_figures({"heatmap": fig1})
     """
     import matplotlib.pyplot as plt
     
@@ -250,37 +257,35 @@ def display_matplotlib_figures(figures_dict: dict) -> str:
 @tool
 def display_plotly_figures(figures_dict: dict) -> str:
     """
-    Display interactive plotly figures in Streamlit interface with comprehensive validation.
+    Display interactive Plotly figures in Streamlit interface.
     
-    This tool handles both plotly express and graph objects figures, providing detailed
-    error reporting and usage guidance. Following smolagents best practices for informative tools.
+    Renders Plotly figures with full interactivity and proper error handling.
+    Call IMMEDIATELY after creating any Plotly chart for proper display.
     
     Args:
-        figures_dict: Dictionary mapping figure names to plotly figure objects.
-                     Example: {"dashboard": plotly_fig, "3d_plot": scatter3d, "timeline": line_chart}
-                     Supports both plotly.express and plotly.graph_objects figures.
+        figures_dict: Dictionary mapping figure names to Plotly figure objects.
+                     Maximum 10 figures per call to maintain performance.
+                     Use descriptive names: {"interactive_scatter": fig, "3d_surface": fig2}
         
     Returns:
-        Detailed status message about successfully displayed figures or comprehensive error
-        information with specific troubleshooting steps for each failure.
+        Status message about successfully displayed figures or detailed error information
+        with troubleshooting steps for failed displays.
+        
+    Error Handling:
+        - "Invalid input": Pass dictionary with Plotly figure objects
+        - "Too many figures": Split into multiple calls (≤10 figures each)  
+        - "Figure rendering failed": Verify Plotly figure is properly constructed
+        - "Streamlit error": Check Streamlit version compatibility
         
     Usage Examples:
-        # Plotly Express figures
-        import plotly.express as px
-        fig = px.scatter(df, x='col1', y='col2', title='Analysis')
+        # Single interactive plot
+        fig = px.scatter(df, x='col1', y='col2', title='Scatter Plot')
         display_plotly_figures({"scatter": fig})
         
-        # Plotly Graph Objects
-        import plotly.graph_objects as go
-        fig = go.Figure(data=go.Bar(x=names, y=values))
-        display_plotly_figures({"bar_chart": fig})
-        
-        # Multiple interactive charts
-        display_plotly_figures({
-            "overview": dashboard_fig,
-            "details": detail_fig,
-            "comparison": comparison_fig
-        })
+        # Multiple plots
+        fig1 = px.line(df, x='date', y='value')
+        fig2 = px.bar(df, x='category', y='count')
+        display_plotly_figures({"trend": fig1, "distribution": fig2})
     """
     print(f"📈 display_plotly_figures called with {len(figures_dict) if isinstance(figures_dict, dict) else 'invalid'} figures")
     
@@ -351,21 +356,27 @@ def display_plotly_figures(figures_dict: dict) -> str:
 @tool
 def discover_data_files() -> str:
     """
-    Discover all available CSV files in the current environment with detailed metadata.
+    Discover and list all available CSV and Excel files for analysis.
     
-    This tool performs a comprehensive search across multiple directories and provides
-    actionable information about each discovered file. Following smolagents best practice
-    of providing functional, informative tools with clear guidance.
+    Searches common directories for data files and provides detailed information
+    about each file including size, modification date, and loading suggestions.
     
+    Args:
+        None required - automatically searches standard data directories.
+        
     Returns:
-        Comprehensive list of discovered CSV files with metadata including size,
-        column count, headers preview, and loading instructions, or detailed
-        explanation if no files are found with troubleshooting suggestions.
+        Comprehensive list of available data files with metadata and loading instructions.
+        Includes file paths, sizes, and recommendations for analysis workflow.
+        
+    Error Handling:
+        - "No files found": Check if data files exist in current/data/available directories
+        - "Permission denied": Verify read access to directories
+        - "Directory not found": Ensure data directories exist
         
     Usage Examples:
-        - discover_data_files()  # Finds all CSV files in common locations
-        - Use before load_csv_data() to see what files are available
-        - Helpful for debugging when specific files cannot be found
+        - discover_data_files()  # Find all available data files
+        
+    Tip: Use this tool first to see what data is available before analysis.
     """
     import os
     import glob
@@ -480,3 +491,47 @@ def discover_data_files() -> str:
         
         print("❌ No CSV files found - providing troubleshooting guidance")
         return troubleshooting 
+
+
+@tool
+def check_undisplayed_figures() -> str:
+    """
+    Check if matplotlib figures exist but haven't been displayed in Streamlit.
+    
+    Automatically detects forgotten figure displays and provides corrective guidance.
+    Call this tool if you suspect figures were created but not shown to the user.
+    
+    Returns:
+        Status of undisplayed figures with specific guidance to display them properly.
+        
+    Usage Examples:
+        - check_undisplayed_figures()  # Check for forgotten displays
+    """
+    import matplotlib.pyplot as plt
+    
+    # Get all current figures
+    figs = plt.get_fignums()
+    
+    if not figs:
+        return "✅ No matplotlib figures detected. All good!"
+    
+    warning_message = f"""⚠️ WARNING: {len(figs)} matplotlib figure(s) detected but not displayed!
+
+🔧 SOLUTION: You must call display_matplotlib_figures() to show your charts:
+
+```python
+# Get current figures and display them
+import matplotlib.pyplot as plt
+current_figs = {{}}
+for i, fig_num in enumerate(plt.get_fignums()):
+    fig = plt.figure(fig_num)
+    current_figs[f"chart_{i+1}"] = fig
+
+# Display all figures
+display_matplotlib_figures(current_figs)
+```
+
+💡 PREVENTION: Always call display_matplotlib_figures() immediately after creating each chart!"""
+    
+    print(f"📊 Validation: Found {len(figs)} undisplayed figures")
+    return warning_message 

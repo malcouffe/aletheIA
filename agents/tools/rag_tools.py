@@ -372,17 +372,29 @@ def _extract_key_information(content: str, query: str) -> str:
 @tool
 def unified_pdf_search_and_analyze(query: str) -> str:
     """
-    Unified tool that searches PDFs and provides analysis with sources in one step.
+    Search PDF documents and provide analysis with citations in one step.
     
-    Following smolagents best practice: "group 2 tools in one" to reduce LLM calls.
-    This tool combines search + display + basic analysis in a single operation.
-    Enhanced with comprehensive debug logging and error handling.
+    Combines PDF search + analysis following smolagents best practice: "group tools 
+    to reduce LLM calls". Handles all document retrieval scenarios automatically.
     
     Args:
-        query: The search query for PDF documents
-        
+        query: Search terms for PDF documents. Use specific keywords for better results.
+               Examples: "financial controls", "risk management procedures", "methodology"
+               Avoid questions - use keywords instead: "internal controls" not "what are internal controls?"
+    
     Returns:
-        Complete response with sources and analysis combined in NotebookLM format
+        Natural analysis with citations [1], [2] and source references. If no documents
+        are available, returns guidance on how to upload and index PDFs first.
+        
+    Error Handling:
+        - "No PDFs available": Upload PDFs via interface, classify and index them first
+        - "No results found": Try broader or different search terms
+        - "Search failed": Check PDF indexing status or contact support
+        
+    Usage Examples:
+        - unified_pdf_search_and_analyze("financial risk assessment")
+        - unified_pdf_search_and_analyze("machine learning methodology")
+        - unified_pdf_search_and_analyze("regulatory compliance")
     """
     
     print(f"🚀 RAG Tool: Starting unified PDF search and analysis")

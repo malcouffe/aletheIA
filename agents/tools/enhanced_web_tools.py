@@ -75,25 +75,30 @@ _web_cache = WebContentCache()
 @tool
 def enhanced_visit_webpage(url: str, extract_links: bool = False, max_content_length: int = 8000) -> str:
     """
-    Enhanced webpage visitor with intelligent content extraction, caching, and optimization.
+    Visit and extract content from webpages with intelligent parsing and caching.
     
-    This tool fetches and parses web content with robust error handling, intelligent 
-    content extraction, and automatic caching for improved performance. Following 
-    smolagents best practices for comprehensive logging and user guidance.
+    Fetches web content with robust error handling, intelligent content extraction,
+    and automatic caching for improved performance on repeated requests.
     
     Args:
-        url: The complete URL to visit (must include http:// or https://)
-        extract_links: Whether to extract and return relevant links from the page
-        max_content_length: Maximum content length to return (prevents token overflow)
+        url: Complete URL including http:// or https:// protocol
+             Use full URLs: "https://example.com/article" not "example.com"
+        extract_links: Whether to extract relevant links from the page (default: False)  
+        max_content_length: Maximum content length to prevent token overflow (default: 8000)
         
     Returns:
-        Cleaned and structured content from the webpage including title, main content,
-        meta information, and optionally relevant links. Or detailed error information
-        with troubleshooting guidance if the request fails.
+        Cleaned and structured content including title, main content, and meta information.
+        Optionally includes relevant links if extract_links=True.
+        
+    Error Handling:
+        - "Invalid URL": Add https:// prefix to URL
+        - "Network error": Check internet connection and URL accessibility
+        - "Timeout": Site may be slow, try again or use different URL
+        - "Parsing error": Site uses complex JavaScript, try simpler pages
         
     Usage Examples:
-        - enhanced_visit_webpage("https://example.com/article")
-        - enhanced_visit_webpage("https://news.site.com", extract_links=True)
+        - enhanced_visit_webpage("https://example.com/news/article")
+        - enhanced_visit_webpage("https://tech.site.com", extract_links=True)
         - enhanced_visit_webpage("https://long-page.com", max_content_length=5000)
     """
     print(f"🌐 enhanced_visit_webpage called for: {url}")
@@ -179,25 +184,31 @@ def enhanced_visit_webpage(url: str, extract_links: bool = False, max_content_le
 @tool 
 def bulk_visit_webpages(urls: List[str], max_workers: int = 3, max_content_per_page: int = 5000) -> str:
     """
-    Visit multiple webpages concurrently for faster research and data gathering.
+    Visit multiple webpages concurrently for efficient research and data gathering.
     
-    This tool efficiently processes multiple URLs in parallel while respecting
-    rate limits and providing comprehensive error reporting. Following smolagents
-    best practices for batch processing and detailed feedback.
+    Processes multiple URLs in parallel while respecting rate limits and providing
+    comprehensive error reporting for each URL.
     
     Args:
-        urls: List of URLs to visit (maximum 10 URLs allowed for performance)
-        max_workers: Maximum number of concurrent requests (recommended: 2-5)
-        max_content_per_page: Maximum content length per page to prevent overflow
+        urls: List of URLs to visit (maximum 10 URLs for performance)
+              All URLs must include http:// or https:// protocol
+        max_workers: Concurrent requests (recommended: 2-5, default: 3)
+        max_content_per_page: Content length per page to prevent overflow (default: 5000)
         
     Returns:
         Combined content from all successfully visited pages with clear separation
-        and status information, plus detailed error reports for failed requests.
+        and status information for each URL.
+        
+    Error Handling:
+        - "Too many URLs": Maximum 10 URLs per call, split large requests
+        - "Invalid URLs": Ensure all URLs include http:// or https://
+        - "Network timeouts": Some sites may be slow, check individual URL status
+        - "Rate limiting": Reduce max_workers if getting blocked
         
     Usage Examples:
         - bulk_visit_webpages(["https://site1.com", "https://site2.com"])
-        - bulk_visit_webpages(urls_list, max_workers=2, max_content_per_page=3000)
-        - bulk_visit_webpages(research_urls, max_workers=4)  # For faster processing
+        - bulk_visit_webpages(research_urls, max_workers=2)
+        - bulk_visit_webpages(urls_list, max_content_per_page=3000)
     """
     print(f"🔄 bulk_visit_webpages called with {len(urls) if isinstance(urls, list) else 'invalid'} URLs")
     print(f"   ⚙️ Settings: max_workers={max_workers}, max_content_per_page={max_content_per_page}")
@@ -295,26 +306,31 @@ def bulk_visit_webpages(urls: List[str], max_workers: int = 3, max_content_per_p
 @tool
 def extract_financial_data(url: str, data_types: List[str] = None) -> str:
     """
-    Specialized tool for extracting financial data from webpages using pattern matching.
+    Extract financial data and metrics from webpages with specialized parsing.
     
-    This tool combines webpage content extraction with intelligent financial data
-    pattern recognition to extract key metrics. Following smolagents best practices
-    for specialized domain tools with clear output formatting.
+    Specifically designed to extract financial information like stock prices,
+    market data, earnings figures, and financial metrics from web content.
     
     Args:
-        url: URL of the financial page to analyze
-        data_types: List of financial data types to extract. Available options:
-                   ['revenue', 'earnings', 'growth', 'margins', 'valuation', 'debt']
-                   If None, extracts all available types.
+        url: Complete URL of financial webpage or article
+        data_types: Optional list of specific data types to extract
+                   Examples: ["prices", "ratios", "earnings", "market_cap"]
+                   If None, extracts all detected financial data
         
     Returns:
-        Structured financial data extraction with identified values, confidence levels,
-        and source context, plus the full page content for additional analysis.
+        Structured financial information with values, dates, and sources.
+        Includes currency symbols, percentage changes, and contextual data.
+        
+    Error Handling:
+        - "No financial data found": Page may not contain financial information
+        - "Invalid URL": Ensure URL points to financial content
+        - "Parsing failed": Site structure may be incompatible
+        - "Data format error": Financial data may be in unsupported format
         
     Usage Examples:
-        - extract_financial_data("https://investor.company.com/earnings")
-        - extract_financial_data("https://finance.yahoo.com/quote/AAPL", ["revenue", "earnings"])
-        - extract_financial_data("https://sec.gov/filing.html", ["revenue", "margins", "debt"])
+        - extract_financial_data("https://finance.yahoo.com/quote/AAPL")
+        - extract_financial_data("https://marketwatch.com/stock/msft", ["prices", "ratios"])
+        - extract_financial_data("https://earnings-report-url.com")
     """
     print(f"🏦 extract_financial_data called for: {url}")
     
