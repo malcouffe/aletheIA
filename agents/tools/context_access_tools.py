@@ -161,6 +161,7 @@ def check_context_availability() -> str:
     report.append("   - check_context_availability(): This tool")
     report.append("   - demonstrate_context_access(): Shows access patterns")
     report.append("   - validate_context_structure(): Verifies context format")
+    report.append("   - debug_agent_context(): Inspects agent's execution context")
     report.append("")
     
     report.append("📚 SMOLAGENTS DOCUMENTATION REFERENCE:")
@@ -675,4 +676,104 @@ def validate_context_structure(context_data: dict = None, context_type: str = "u
     else:
         print(f"✅ Validation passed: {len(warnings_found)} warnings")
     
+    return result
+
+
+@tool
+def debug_agent_context() -> str:
+    """
+    Debug tool to inspect the current agent's execution context and available variables.
+    
+    This tool helps identify why PDF context might not be accessible and provides
+    specific troubleshooting steps for the smolagents architecture.
+    
+    Returns:
+        Detailed report of the agent's current context state and troubleshooting guidance
+    """
+    import inspect
+    import sys
+    
+    debug_report = ["🔍 AGENT CONTEXT DEBUG REPORT"]
+    debug_report.append("=" * 50)
+    debug_report.append("")
+    
+    try:
+        # Get current frame and inspect local variables
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            local_vars = frame.f_back.f_locals
+            global_vars = frame.f_back.f_globals
+            
+            debug_report.append("📋 LOCAL VARIABLES INSPECTION:")
+            debug_report.append(f"   Total local variables: {len(local_vars)}")
+            
+            # Check for expected context variables
+            context_vars = ['pdf_context', 'csv_context', 'additional_args']
+            found_context = []
+            
+            for var_name in context_vars:
+                if var_name in local_vars:
+                    var_value = local_vars[var_name]
+                    if var_value:
+                        found_context.append(f"✅ {var_name}: {type(var_value)} (has data)")
+                        if isinstance(var_value, dict):
+                            debug_report.append(f"      Keys: {list(var_value.keys())}")
+                    else:
+                        found_context.append(f"⚠️ {var_name}: {type(var_value)} (empty)")
+                else:
+                    found_context.append(f"❌ {var_name}: Not found")
+            
+            debug_report.extend(found_context)
+            debug_report.append("")
+            
+            # Check for other relevant variables
+            debug_report.append("🔍 OTHER RELEVANT VARIABLES:")
+            relevant_vars = ['task', 'user_query', 'query', 'prompt']
+            for var_name in relevant_vars:
+                if var_name in local_vars:
+                    var_value = local_vars[var_name]
+                    debug_report.append(f"   ✅ {var_name}: {type(var_value)} = {str(var_value)[:100]}...")
+            
+            debug_report.append("")
+            
+        else:
+            debug_report.append("❌ Could not access frame information")
+            debug_report.append("")
+        
+        # Check Python path and imports
+        debug_report.append("🐍 PYTHON ENVIRONMENT:")
+        debug_report.append(f"   Python version: {sys.version}")
+        debug_report.append(f"   Current working directory: {sys.path[0] if sys.path else 'Unknown'}")
+        debug_report.append("")
+        
+        # Provide troubleshooting guidance
+        debug_report.append("🛠️ TROUBLESHOOTING GUIDANCE:")
+        debug_report.append("")
+        debug_report.append("1. **Context Variable Issues:**")
+        debug_report.append("   - Verify additional_args are passed to agent.run()")
+        debug_report.append("   - Check if context preparation is working in ui/chat.py")
+        debug_report.append("   - Ensure PDF files are properly processed and indexed")
+        debug_report.append("")
+        debug_report.append("2. **PDF Database Issues:**")
+        debug_report.append("   - Check if vector database files exist in data/pdf_temp/")
+        debug_report.append("   - Verify PDF indexing completed successfully")
+        debug_report.append("   - Ensure ChromaDB dependencies are installed")
+        debug_report.append("")
+        debug_report.append("3. **Agent Configuration Issues:**")
+        debug_report.append("   - Verify RAG agent has correct tools imported")
+        debug_report.append("   - Check if context passing mechanism is working")
+        debug_report.append("   - Ensure smolagents version is compatible")
+        debug_report.append("")
+        debug_report.append("💡 NEXT STEPS:")
+        debug_report.append("   1. Upload and index PDF files via the UI")
+        debug_report.append("   2. Check session state in Streamlit sidebar")
+        debug_report.append("   3. Use diagnose_pdf_context() for PDF-specific debugging")
+        debug_report.append("   4. Try smart_pdf_search() which has built-in fallbacks")
+        
+    except Exception as e:
+        debug_report.append(f"❌ Error during context debugging: {str(e)}")
+        debug_report.append("This might indicate a deeper issue with the agent execution environment")
+    
+    result = "\n".join(debug_report)
+    print("🔍 Agent context debug completed")
     return result 

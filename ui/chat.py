@@ -4,6 +4,7 @@ Chat interface functionality for handling user interactions.
 import streamlit as st
 import time
 import datetime
+from .rag_display import display_structured_rag_response
 
 
 def display_chat_interface(model, agent_manager):
@@ -19,8 +20,10 @@ def display_chat_interface(model, agent_manager):
                     # Special formatting for system messages (file uploads, indexing, etc.)
                     _display_system_message(message["content"], message.get("timestamp"))
                 else:
-                    # Regular assistant response
-                    st.markdown(message["content"])
+                    # Try to display as interactive RAG results, fallback to text
+                    if not display_structured_rag_response(message["content"], ""):
+                        # Regular assistant response
+                        st.markdown(message["content"])
                     _display_timestamp(message.get("timestamp"))
             else:
                 # User message
@@ -58,9 +61,15 @@ def display_chat_interface(model, agent_manager):
                 # Clear the status and show final response
                 status_placeholder.empty()
                 
-                # Format and display the final response
-                formatted_response = _format_agent_response(final_response)
-                st.markdown(formatted_response)
+                # Try to display as interactive RAG results first
+                if display_structured_rag_response(final_response, prompt):
+                    # Interactive display was successful
+                    # Still store the response but format it for chat history
+                    formatted_response = _format_agent_response_for_history(final_response)
+                else:
+                    # Fallback to regular text display
+                    formatted_response = _format_agent_response(final_response)
+                    st.markdown(formatted_response)
                 
                 # Store the formatted response in session state with timestamp
                 st.session_state.messages.append({
@@ -169,6 +178,35 @@ def _format_agent_response(response):
     formatted_response = formatted_response.replace('\\"', '"')
     
     return formatted_response if formatted_response else "Aucune réponse générée."
+
+
+def _format_agent_response_for_history(response):
+    """Format agent response for chat history when interactive display is used."""
+    if not response:
+        return "Aucune réponse générée."
+    
+    # For RAG responses with interactive display, store a clean summary
+    formatted_response = _format_agent_response(response)
+    
+    # Remove the streamlit display markers from history
+    if "```streamlit_rag_display" in formatted_response:
+        lines = formatted_response.split('\n')
+        clean_lines = []
+        skip_block = False
+        
+        for line in lines:
+            if line.strip().startswith("```streamlit_rag_display"):
+                skip_block = True
+                continue
+            elif skip_block and line.strip() == "```":
+                skip_block = False
+                continue
+            elif not skip_block:
+                clean_lines.append(line)
+        
+        formatted_response = '\n'.join(clean_lines).strip()
+    
+    return formatted_response if formatted_response else "Résultats affichés ci-dessus."
 
 
 def _prepare_context():

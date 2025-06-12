@@ -19,8 +19,8 @@ from ui.components import handle_uploaded_file
 from ui.state_sync import sync_file_status
 from ui.realtime_notifications import create_status_toast
 
-# Import from new simplified agent architecture
-from agents import SimplifiedAgentManager
+# Import from multi-agent architecture
+from agents import MultiAgentManager
 import time
 
 # Prevent torch serialization issues
@@ -40,7 +40,7 @@ def initialize_session_state():
 
 
 def initialize_agents(api_key):
-    """Initialize the agent manager with simplified architecture."""
+    """Initialize the agent manager with multi-agent architecture."""
     model = None
     agent_manager = None
 
@@ -54,9 +54,9 @@ def initialize_agents(api_key):
                 )
             model = st.session_state.model
 
-            # Initialize simplified agent manager with streamlined architecture
+            # Initialize multi-agent manager
             if 'agent_manager' not in st.session_state or st.session_state.agent_manager is None:
-                st.session_state.agent_manager = SimplifiedAgentManager(model)
+                st.session_state.agent_manager = MultiAgentManager(model)
                 st.session_state.agent_manager.initialize()
             
             agent_manager = st.session_state.agent_manager
@@ -168,7 +168,7 @@ def main():
     # Display configuration sidebar and get inputs
     api_key, mistral_api_key, uploaded_file = display_config_sidebar()
 
-    # Initialize agents with new simplified architecture
+    # Initialize agents with multi-agent architecture
     model, agent_manager = initialize_agents(api_key)
 
     # Handle file upload
