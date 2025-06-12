@@ -309,7 +309,9 @@ def display_plotly_figures(figures_dict: dict) -> str:
     
     displayed_count = 0
     failed_figures = []
-    width_setting = VISUALIZATION_CONFIG.get("default_plotly_width", True)
+    width_setting = VISUALIZATION_CONFIG.get("default_plotly_width")
+    if width_setting is None:
+        width_setting = True  # Default to use container width
     
     for fig_name, fig_obj in figures_dict.items():
         try:

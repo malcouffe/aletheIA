@@ -20,18 +20,19 @@ class AgentSettings:
 # Predefined agent configurations
 AGENT_CONFIGS = {
     "search_agent": AgentSettings(
-        max_steps=5,
+        max_steps=8,
         verbosity_level=0,
-        planning_interval=5
+        planning_interval=3
     ),
     "data_analyst": AgentSettings(
         max_steps=15,
-        verbosity_level=1
+        verbosity_level=1,
+        planning_interval=5
     ),
     "rag_agent": AgentSettings(
-        max_steps=8,
+        max_steps=6,
         verbosity_level=2,
-        planning_interval=4
+        planning_interval=3
     ),
     "manager_agent": AgentSettings(
         max_steps=2,
