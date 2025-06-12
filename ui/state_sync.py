@@ -79,7 +79,7 @@ def get_status_message(status: str, filename: str) -> str:
 def sync_chat_with_status(file_id: str):
     """
     Synchronize chat messages with the current file status.
-    Updates the most recent relevant chat message to reflect the current status.
+    This is now only used internally by the sync system.
     """
     if file_id not in st.session_state.processed_files:
         return
@@ -88,34 +88,15 @@ def sync_chat_with_status(file_id: str):
     filename = file_details.get('filename', f'ID: {file_id}')
     current_status = file_details.get('status', 'unknown')
     
-    # Look for the most recent message about this file
-    for i in range(len(st.session_state.messages) - 1, -1, -1):
-        message = st.session_state.messages[i]
-        if (message.get("role") == "assistant" and 
-            filename in message.get("content", "")):
-            
-            # Update the message with current status
-            new_message = get_status_message(current_status, filename)
-            st.session_state.messages[i]["content"] = new_message
-            break
-    else:
-        # No existing message found, add a new one
+    # Add status message to chat only if it's an important transition
+    important_statuses = ['indexed', 'ready', 'error_indexing', 'error_analysis']
+    if current_status in important_statuses:
         new_message = get_status_message(current_status, filename)
         st.session_state.messages.append({
             "role": "assistant",
             "content": new_message,
             "timestamp": time.time()
         })
-
-
-def refresh_ui_state():
-    """Force refresh of all UI components."""
-    # Clear any cached state
-    if hasattr(st.session_state, '_ui_cache'):
-        delattr(st.session_state, '_ui_cache')
-    
-    # Force rerun to update all components
-    st.rerun()
 
 
 def is_status_transition_valid(old_status: str, new_status: str) -> bool:

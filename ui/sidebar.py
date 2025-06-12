@@ -3,7 +3,7 @@ Sidebar UI components for displaying processed files and their status.
 """
 import streamlit as st
 from config.settings import STATUS_MAP, FILE_TYPE_ICONS
-from ui.state_sync import get_status_emoji, sync_chat_with_status
+from ui.state_sync import get_status_emoji
 from core.session_manager import update_user_notes_callback, update_csv_user_notes_callback
 from core.file_manager import delete_file_callback, select_pdf_for_action
 
@@ -13,15 +13,8 @@ def display_processed_files_sidebar():
     with st.sidebar:
         st.divider()
         
-        # Header with auto-refresh option
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            st.subheader("Fichiers Traités")
-        with col2:
-            auto_refresh = st.checkbox("🔄", value=False, help="Actualisation automatique")
-        with col3:
-            if st.button("↻", help="Actualiser maintenant", key="manual_refresh_files"):
-                st.rerun()
+        # Simplified header - just the title, auto-sync in background
+        st.subheader("Fichiers Traités")
 
         processed_files = st.session_state.get('processed_files', {})
 
@@ -57,11 +50,7 @@ def display_processed_files_sidebar():
                 _display_file_actions(file_id, file_type, status)
                 _display_file_details(file_id, file_type, details)
                 
-                # Sync button for debugging
-                if st.button("🔄 Sync Chat", key=f"sync_chat_{file_id}", help="Synchroniser avec le chat"):
-                    sync_chat_with_status(file_id)
-                    st.rerun()
-                
+                # Only keep the delete button - sync happens automatically
                 with st.columns([3,2])[1]:
                     st.button(
                         "Supprimer", 
@@ -73,11 +62,8 @@ def display_processed_files_sidebar():
                     )
             st.markdown("---")
         
-        # Auto-refresh functionality
-        if auto_refresh:
-            import time
-            time.sleep(2)  # Refresh every 2 seconds
-            st.rerun()
+        # Auto-sync happens transparently when needed
+        _auto_sync_if_needed()
 
 
 def _display_file_status(status: str):
@@ -184,3 +170,24 @@ def _display_csv_details(file_id: str, details: dict):
         on_change=update_csv_user_notes_callback,
         args=(file_id,)
     ) 
+
+def _auto_sync_if_needed():
+    """
+    Automatically sync UI state only when necessary (when there are indexing files).
+    This replaces the old manual sync buttons with intelligent background sync.
+    """
+    processed_files = st.session_state.get('processed_files', {})
+    
+    # Check if any files are in active states that need monitoring
+    active_states = ['indexing']
+    has_active_files = any(
+        details.get('status') in active_states 
+        for details in processed_files.values()
+    )
+    
+    # Only auto-refresh if there are files in active states
+    if has_active_files:
+        # Add a small delay and refresh (less aggressive than before)
+        import time
+        time.sleep(1)  # Reduced from 2 seconds to 1 second
+        st.rerun() 

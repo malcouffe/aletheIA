@@ -18,15 +18,12 @@ logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 logging.getLogger("smolagents").setLevel(logging.WARNING)
 
 # Import from new modular structure
-from config.settings import SUPPORTED_FILE_TYPES
 from core.session_manager import load_persistent_state, save_persistent_state
 from ui.config_sidebar import display_config_sidebar
 from ui.sidebar import display_processed_files_sidebar
 from ui.pdf_actions import display_pdf_action_section
 from ui.chat import display_chat_interface
 from ui.components import handle_uploaded_file
-from ui.state_sync import sync_file_status
-from ui.realtime_notifications import create_status_toast
 
 
 # Import from multi-agent architecture
