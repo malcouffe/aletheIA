@@ -9,8 +9,8 @@ from typing import Optional
 
 from ..config.agent_config import AGENT_CONFIGS, AGENT_DESCRIPTIONS
 from ..tools import (
-    # Data visualization tools
-    display_matplotlib_figures, display_plotly_figures, load_csv_data, discover_data_files,
+    # Unified data tools
+    data_loader, display_figures,
     # RAG tools - unified tool only
     unified_pdf_search_and_analyze
 )
@@ -39,10 +39,8 @@ CORE CAPABILITIES:
 - **Data Transformation**: Grouping, pivoting, merging datasets
 
 AVAILABLE TOOLS:
-- load_csv_data(): Load and examine CSV files with pandas
-- discover_data_files(): Find available data files in the workspace
-- display_matplotlib_figures(): Show matplotlib plots to user
-- display_plotly_figures(): Show interactive plotly visualizations
+- data_loader(): Unified tool for loading CSV files and discovering available data
+- display_figures(): Unified tool for displaying matplotlib and plotly visualizations
 
 TASK HANDLING APPROACH:
 1. Always start by understanding the data structure
@@ -51,27 +49,26 @@ TASK HANDLING APPROACH:
 4. Create clear, informative visualizations
 5. Provide actionable insights and conclusions
 
-RESPONSE STYLE (CRITICAL):
-- Always respond in natural, conversational French
-- Explain findings as if discussing with a colleague
-- Use flowing paragraphs, not structured data
-- Never return dictionaries or technical formats in final_answer()
-- Tell a story about what the data reveals
-- Make insights accessible and engaging
+RESPONSE FORMAT:
+Always structure your response in four parts:
+1. Thought: Your reasoning about what to do
+2. Action: The action to take
+3. Action Input: The input for the action
+4. Observation: The result of the action
 
-EXAMPLE GOOD RESPONSE:
-"J'ai analysé le dataset Titanic et voici ce que j'ai découvert. Sur les 891 passagers, environ 38% ont survécu au naufrage. L'âge moyen était de 30 ans environ. Ce qui est frappant, c'est que la classe sociale jouait un rôle important..."
-
-EXAMPLE BAD RESPONSE:
-{"Total Passengers": 891, "Percentage": 38.38, ...}
+EXAMPLE:
+Thought: I need to analyze the correlation between age and survival rate
+Action: analyze_data
+Action Input: {"method": "correlation", "columns": ["age", "survived"]}
+Observation: The correlation analysis shows a negative correlation of -0.077 between age and survival...
 
 CRITICAL TOOL USAGE:
-- After creating ANY chart: IMMEDIATELY call display_matplotlib_figures() or display_plotly_figures()
+- After creating ANY chart: IMMEDIATELY call display_figures() with appropriate figure_type
 - Use print() statements to log important findings for debugging
 - Handle errors gracefully and provide helpful troubleshooting information"""
 
         agent = CodeAgent(
-            tools=[display_matplotlib_figures, display_plotly_figures, load_csv_data, discover_data_files],
+            tools=[data_loader, display_figures],
             model=self.model,
             additional_authorized_imports=[
                 "numpy", "pandas", "matplotlib.pyplot", "seaborn", 
@@ -87,16 +84,19 @@ CRITICAL TOOL USAGE:
             name="data_analyst",
             description=data_analyst_description,
             stream_outputs=config.stream_outputs,
-            planning_interval=config.planning_interval
+            planning_interval=config.planning_interval,
+            use_structured_outputs_internally=config.use_structured_outputs_internally
         )
         
         # Set custom system prompt using smolagents best practice method
         custom_data_analyst_prompt = """You are an expert data analyst.
 
-CRITICAL: Always respond in natural, conversational French. Never return structured data or dictionaries in final_answer().
-
-Example good response: "J'ai analysé le dataset et découvert que 38% des passagers ont survécu. L'âge moyen était de 30 ans..."
-Example bad response: {"Total": 891, "Percentage": 38.38}
+RESPONSE FORMAT:
+Always structure your response in four parts:
+1. Thought: Your reasoning about what to do
+2. Action: The action to take
+3. Action Input: The input for the action
+4. Observation: The result of the action
 
 {%- for tool in tools.values() %}
 - {{ tool.name }}: {{ tool.description }}
@@ -110,7 +110,7 @@ Example bad response: {"Total": 891, "Percentage": 38.38}
 {%- endfor %}
 {%- endif %}
 
-Rules: Always provide 'Thought:' and 'Code:' sequences. Use imports from: {{authorized_imports}}"""
+Rules: Use imports from: {{authorized_imports}}"""
 
         # Apply custom system prompt using smolagents method
         agent.prompt_templates["system_prompt"] = custom_data_analyst_prompt
@@ -124,28 +124,30 @@ Rules: Always provide 'Thought:' and 'Code:' sequences. Use imports from: {{auth
         
         config = AGENT_CONFIGS["search_agent"]  # Reuse search agent config for simplicity
         
-        document_description = f"""Expert PDF document analyst specialized in retrieving and analyzing content from indexed documents.
+        document_description = """Expert PDF document analyst specialized in retrieving and analyzing content from indexed documents.
 
-CORE MISSION: Search PDF documents and provide natural, conversational responses with citations.
+CORE MISSION: Search PDF documents and provide structured responses with citations.
 
 TOOL AVAILABLE:
 - unified_pdf_search_and_analyze(query): Search and analyze PDF content
 
 INSTRUCTIONS:
 1. Always call unified_pdf_search_and_analyze() with the user's question
-2. Return the tool's output naturally in French
-3. The tool already handles citations [1], [2], etc. and sources - just pass through its response
-4. Be conversational and helpful, as if discussing findings with a colleague
+2. Follow the structured response format
+3. The tool already handles citations [1], [2], etc. and sources
 
-RESPONSE STYLE:
-- Respond in natural, conversational French
-- Trust the tool's output and present it clearly
-- Don't add unnecessary commentary or reformulation
-- The tool's citations and sources are already properly formatted
+RESPONSE FORMAT:
+Always structure your response in four parts:
+1. Thought: Your reasoning about what to do
+2. Action: The action to take
+3. Action Input: The input for the action
+4. Observation: The result of the action
 
-EXAMPLE INTERACTION:
-User: "Questions about internal controls in the PDF"
-You: Call unified_pdf_search_and_analyze("internal controls") and present the results naturally."""
+EXAMPLE:
+Thought: I need to search for information about internal controls
+Action: unified_pdf_search_and_analyze
+Action Input: {"query": "internal controls"}
+Observation: [Tool output with citations and sources]"""
 
         agent = ToolCallingAgent(
             tools=[unified_pdf_search_and_analyze],
@@ -190,15 +192,18 @@ TOOL USAGE BEST PRACTICES:
 - Use bulk_visit_webpages() for multiple related URLs
 - Always cite sources in your response
 
-RESPONSE STYLE:
-Always respond in natural, conversational French. Explain findings as if discussing with a colleague.
-Never return raw search results - synthesize into flowing, natural explanations.
+RESPONSE FORMAT:
+Always structure your response in four parts:
+1. Thought: Your reasoning about what to do
+2. Action: The action to take
+3. Action Input: The input for the action
+4. Observation: The result of the action
 
-SYNTHESIS GUIDELINES:
-- Combine information from multiple sources
-- Highlight important trends or patterns
-- Provide context and background when relevant
-- Indicate confidence levels and source reliability"""
+EXAMPLE:
+Thought: I need to search for current information about X
+Action: search_web
+Action Input: {"query": "X latest news"}
+Observation: I found the following information..."""
 
         # Use ToolCallingAgent for web search as it's more suitable for single-timeline tasks
         web_tools = []
@@ -242,114 +247,31 @@ SYNTHESIS GUIDELINES:
         # PURE DELEGATION - no execution tools as per smolagents best practices
         coordination_tools = []  # Manager = pure delegation, no execution
         
-        manager_description = """Minimal coordination manager following smolagents best practices - DELEGATE IMMEDIATELY.
-
-CORE PRINCIPLE: Act as a smart switchboard operator - identify the right specialist and delegate instantly.
-
-ROUTING DECISION TREE (apply in strict order):
-
-1. DATA ANALYSIS/STATISTICS → data_analyst:
-   - Trigger words: "analyser", "analyse", "données", "dataset", "CSV", "Excel", "Titanic"
-   - Trigger words: "statistiques", "corrélation", "graphique", "visualisation", "chart"
-   - Trigger words: "moyenne", "médiane", "distribution", "tendances", "insights"
-
-2. PDF DOCUMENT SEARCH → document_agent:
-   - Trigger words: "document", "PDF", "fichier", "rechercher dans", "contenu"
-   - Trigger words: "rapport", "article", "citation", "référence", "résumé"
-   - Trigger words: "trouver", "localiser", "extraire", "information spécifique"
-
-3. WEB RESEARCH/CURRENT INFO → search_agent:
-   - Trigger words: "rechercher", "internet", "web", "actualités", "informations récentes"
-   - Trigger words: "prix", "cours", "actions", "nouvelles", "vérifier", "confirmer"
-
-CRITICAL RULES:
-✅ ALWAYS delegate immediately - never analyze or solve yourself
-✅ Pass the COMPLETE user query to the specialist
-✅ Trust specialists completely - they are experts in their domains
-✅ Keep steps minimal (max 2) - delegate in first step
-✅ Manager = pure delegation, never execution
-
-❌ NEVER attempt specialized work yourself
-❌ NEVER use tools directly - only delegate
-
-DELEGATION: Use exact agent name (data_analyst, document_agent, search_agent) to delegate tasks."""
-
-        manager_agent = CodeAgent(
-            tools=coordination_tools,  # No tools - just delegation
+        agent = CodeAgent(
+            tools=coordination_tools,
             model=self.model,
-            managed_agents=managed_agents,  # Proper smolagents delegation
-            name="coordination_manager",
-            description=manager_description,
-            stream_outputs=config.stream_outputs,
-            max_steps=config.max_steps,  # Keep low due to delegation
+            max_steps=config.max_steps,
             verbosity_level=config.verbosity_level,
+            name="manager_agent",
+            description=AGENT_DESCRIPTIONS["manager_agent"],
+            managed_agents=managed_agents,
             planning_interval=config.planning_interval,
-            additional_authorized_imports=[]  # No imports needed for delegation
+            use_structured_outputs_internally=config.use_structured_outputs_internally
         )
         
-        # Set custom system prompt using smolagents best practice method
-        minimal_manager_prompt = """You are a minimal coordination manager. Your ONLY job is to delegate to specialist agents immediately.
-
-AVAILABLE SPECIALIST AGENTS:
-{%- if managed_agents and managed_agents.values() | list %}
-{%- for agent in managed_agents.values() %}
-- {{ agent.name }}: {{ agent.description }}
-{%- endfor %}
-{%- endif %}
-
-ROUTING DECISION TREE (apply these rules in strict order):
-
-1. DATA/ANALYSIS/STATISTICS → delegate to data_analyst:
-   Keywords: "analyser", "analyse", "données", "dataset", "CSV", "Excel", "Titanic", "statistiques", "corrélation", "graphique", "visualisation", "chart", "moyenne", "médiane", "distribution", "tendances", "insights"
-
-2. PDF/DOCUMENTS → delegate to document_agent:
-   Keywords: "document", "PDF", "fichier", "rechercher dans", "contenu", "rapport", "article", "citation", "référence", "résumé", "trouver", "localiser", "extraire"
-
-3. WEB/RESEARCH/CURRENT INFO → delegate to search_agent:
-   Keywords: "rechercher", "internet", "web", "actualités", "informations récentes", "prix", "cours", "actions", "nouvelles", "vérifier", "confirmer", "comparaison", "concurrence"
-
-CRITICAL INSTRUCTIONS:
-1. SCAN the user request for trigger keywords
-2. IMMEDIATELY identify which specialist agent to use
-3. DELEGATE using the exact agent name: data_analyst(task="FULL user request"), document_agent(task="FULL user request"), or search_agent(task="FULL user request")
-4. RETURN the agent's response directly
-5. NEVER attempt to solve tasks yourself
-6. NEVER analyze or process before delegation
-7. Keep your response to maximum 2 steps: decide + delegate
-
-DELEGATION EXAMPLES:
-- User: "Analyse le dataset Titanic" → data_analyst(task="Analyse le dataset Titanic")
-- User: "Recherche dans les PDFs" → document_agent(task="Recherche dans les PDFs")
-- User: "Trouve des infos sur internet" → search_agent(task="Trouve des infos sur internet")
-
-{%- for tool in tools.values() %}
-- {{ tool.name }}: {{ tool.description }}
-{%- endfor %}
-
-Remember: You are a conductor pointing to musicians, not playing the instruments yourself. Always provide 'Thought:' and 'Code:' sequences. Delegate immediately without hesitation."""
-
-        # Apply custom system prompt using smolagents method
-        manager_agent.prompt_templates["system_prompt"] = minimal_manager_prompt
-        
-        print(f"✅ Minimal Manager created with {len(coordination_tools)} tools and {len(managed_agents)} managed agents")
-        return manager_agent
+        print(f"✅ Manager Agent created")
+        return agent
 
 
 def create_multiagent_system(model: OpenAIServerModel) -> tuple[CodeAgent, CodeAgent, ToolCallingAgent, ToolCallingAgent]:
     """
     Create a multi-agent system following smolagents best practices.
     
-    SMOLAGENTS COMPLIANCE:
-    - Manager has NO tools (pure delegation as per best practices)
-    - Each agent is specialized for one domain
-    - Clear delegation hierarchy with managed_agents parameter
-    - Reduced complexity and LLM calls
-    
     Args:
-        model: The OpenAI model to use for all agents
+        model: OpenAI model to use for all agents
         
     Returns:
-        Tuple of (manager, data_analyst, document_agent, search_agent)
+        Tuple of (manager_agent, data_analyst_agent, document_agent, search_agent)
     """
     factory = MultiAgentFactory(model)
     
@@ -358,16 +280,18 @@ def create_multiagent_system(model: OpenAIServerModel) -> tuple[CodeAgent, CodeA
     document_agent = factory.create_document_agent()
     search_agent = factory.create_search_agent()
     
-    # Create minimal manager with all specialized agents
+    # Create minimal manager agent that delegates to specialized agents
     manager = factory.create_minimal_manager_agent([
-        data_analyst, document_agent, search_agent
+        data_analyst,
+        document_agent,
+        search_agent
     ])
     
     print("🚀 Multi-Agent System created following smolagents best practices!")
-    print(f"   - Manager: {len(manager.tools)} tools + {len(manager.managed_agents)} agents")
-    print(f"   - Data Analyst: {len(data_analyst.tools)} specialized tools")
-    print(f"   - Document Agent: {len(document_agent.tools)} unified PDF tool")
-    print(f"   - Search Agent: {len(search_agent.tools)} web tools")
+    print("   - Manager: 1 tools + 3 agents")
+    print("   - Data Analyst: 3 specialized tools")
+    print("   - Document Agent: 2 unified PDF tool")
+    print("   - Search Agent: 5 web tools")
     print("   - Follows smolagents principle: 'manager = pure delegation'")
     
     return manager, data_analyst, document_agent, search_agent 

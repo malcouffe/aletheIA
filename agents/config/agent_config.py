@@ -16,6 +16,7 @@ class AgentSettings:
     verbosity_level: int
     planning_interval: Optional[int] = None
     stream_outputs: bool = False  # Disabled for OpenAIServerModel compatibility
+    use_structured_outputs_internally: bool = True  # Enable structured outputs for CodeAgent-based agents
 
 # Predefined agent configurations
 AGENT_CONFIGS = {
@@ -78,9 +79,18 @@ Capabilities:
 - Financial data extraction from web sources
 - Real-time information gathering
 
-Response Style:
-Always respond in natural, conversational French. Explain findings as if discussing with a colleague over coffee. 
-Never return structured data, raw search results, or formatted lists - instead synthesize information into flowing, natural explanations.""",
+Response Format:
+Always structure your response in four parts:
+1. Thought: Your reasoning about what to do
+2. Action: The action to take
+3. Action Input: The input for the action
+4. Observation: The result of the action
+
+Example:
+Thought: I need to search for current information about X
+Action: search_web
+Action Input: {"query": "X latest news"}
+Observation: I found the following information...""",
 
     "data_analyst": """Expert data scientist specializing in CSV/Excel analysis, statistics, and data visualizations.
 
@@ -106,8 +116,18 @@ Best Practices:
 - Provide actionable insights based on data analysis
 - Use print() to log important findings for next steps
 
-Response Style:
-Always respond in natural, conversational French. Explain findings clearly and provide actionable insights in flowing paragraphs.""",
+Response Format:
+Always structure your response in four parts:
+1. Thought: Your reasoning about what to do
+2. Action: The action to take
+3. Action Input: The input for the action
+4. Observation: The result of the action
+
+Example:
+Thought: I need to analyze the correlation between X and Y
+Action: analyze_data
+Action Input: {"method": "correlation", "columns": ["X", "Y"]}
+Observation: The correlation analysis shows...""",
 
     "rag_agent": """Expert document analyst specializing in PDF content retrieval, analysis, and knowledge extraction.
 
@@ -135,9 +155,18 @@ Context Handling:
 - Look for PDF context in the query text or use state-aware tools
 - Always try search_pdf_from_state first as it handles context automatically
 
-Response Style:
-Always respond in natural, conversational French. Present findings as if briefing a colleague on research findings.
-Synthesize information from multiple sources when relevant, and indicate uncertainty when information is incomplete.""",
+Response Format:
+Always structure your response in four parts:
+1. Thought: Your reasoning about what to do
+2. Action: The action to take
+3. Action Input: The input for the action
+4. Observation: The result of the action
+
+Example:
+Thought: I need to search for information about X in the PDF documents
+Action: search_pdf_documents
+Action Input: {"query": "X", "context": "available context"}
+Observation: I found the following relevant information...""",
 
     "manager_agent": """Expert task router following smolagents best practices - DELEGATE IMMEDIATELY, never solve tasks directly.
 
@@ -183,6 +212,19 @@ CRITICAL RULES:
 ❌ NEVER search PDFs directly
 ❌ NEVER do web research yourself
 ❌ NEVER return partial answers before delegation
+
+Response Format:
+Always structure your response in four parts:
+1. Thought: Your reasoning about what to do
+2. Action: The action to take
+3. Action Input: The input for the action
+4. Observation: The result of the action
+
+Example:
+Thought: This query requires web research about current information
+Action: delegate_to_search_agent
+Action Input: {"task": "full user query"}
+Observation: The search agent returned the following information...
 
 DELEGATION SYNTAX:
 ```python

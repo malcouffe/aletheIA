@@ -119,34 +119,38 @@ class ContextManager:
 
 
 
-def prepare_manager_context(
-    available_pdfs_context: Optional[List[Dict]] = None,
-    available_csvs_context: Optional[List[Dict]] = None
-) -> Dict[str, Any]:
+def prepare_manager_context(additional_args: Dict[str, Any]) -> Dict[str, Any]:
     """
     Prepare context data for the manager agent using additional_args.
     Enhanced with debug logging following smolagents best practices.
     
     Args:
-        available_pdfs_context: List of PDF file context dictionaries
-        available_csvs_context: List of CSV file context dictionaries
+        additional_args: Dictionary containing context information
     
     Returns:
         Context dictionary for additional_args
     """
     print("🏗️ Context Prep: Preparing manager context")
-    print(f"📄 Context Prep: PDFs provided: {len(available_pdfs_context) if available_pdfs_context else 0}")
-    print(f"📊 Context Prep: CSVs provided: {len(available_csvs_context) if available_csvs_context else 0}")
+    
+    # Extract context from additional_args
+    pdf_context = additional_args.get('pdf_context', {})
+    csv_context = additional_args.get('csv_context', {})
+    
+    available_pdfs = pdf_context.get('available_files', [])
+    available_csvs = csv_context.get('available_files', [])
+    
+    print(f"📄 Context Prep: PDFs provided: {len(available_pdfs)}")
+    print(f"📊 Context Prep: CSVs provided: {len(available_csvs)}")
     
     manager = ContextManager()
     
-    if available_pdfs_context:
+    if available_pdfs:
         print("📄 Context Prep: Setting PDF context")
-        manager.set_pdf_context(available_pdfs_context)
+        manager.set_pdf_context(available_pdfs)
     
-    if available_csvs_context:
+    if available_csvs:
         print("📊 Context Prep: Setting CSV context")
-        manager.set_csv_context(available_csvs_context)
+        manager.set_csv_context(available_csvs)
     
     context = manager.get_context_dict()
     
@@ -154,19 +158,14 @@ def prepare_manager_context(
     return context
 
 
-def build_simple_manager_task(
-    user_query: str,
-    available_pdfs_context: Optional[List[Dict]] = None,
-    available_csvs_context: Optional[List[Dict]] = None
-) -> str:
+def build_simple_manager_task(user_query: str, context: Dict[str, Any]) -> str:
     """
     Build a simple task description for the manager agent.
     Enhanced with debug logging and smolagents best practices.
     
     Args:
         user_query: The user's query/request (already enriched by contextual agent)
-        available_pdfs_context: List of PDF file context dictionaries  
-        available_csvs_context: List of CSV file context dictionaries
+        context: Dictionary containing context information
     
     Returns:
         Formatted task description optimized for smolagents delegation
@@ -176,13 +175,20 @@ def build_simple_manager_task(
     
     manager = ContextManager()
     
-    if available_pdfs_context:
-        print("📄 Task Builder: Including PDF context in task")
-        manager.set_pdf_context(available_pdfs_context)
+    # Extract context from additional_args
+    pdf_context = context.get('pdf_context', {})
+    csv_context = context.get('csv_context', {})
     
-    if available_csvs_context:
+    available_pdfs = pdf_context.get('available_files', [])
+    available_csvs = csv_context.get('available_files', [])
+    
+    if available_pdfs:
+        print("📄 Task Builder: Including PDF context in task")
+        manager.set_pdf_context(available_pdfs)
+    
+    if available_csvs:
         print("📊 Task Builder: Including CSV context in task")
-        manager.set_csv_context(available_csvs_context)
+        manager.set_csv_context(available_csvs)
     
     context_hints = manager.get_context_summary()
     print(f"💡 Task Builder: Generated {len(context_hints)} context hints")

@@ -224,9 +224,12 @@ class MultiAgentManager:
     def initialize(self):
         """Initialize the multi-agent system."""
         if self._initialized:
+            print("⚠️ Multi-agent system already initialized")
             return
         
         print("🚀 Initializing multi-agent system...")
+        
+        # Create the multi-agent system
         (
             self.manager_agent,
             self.data_analyst_agent,
@@ -234,7 +237,7 @@ class MultiAgentManager:
             self.search_agent
         ) = create_multiagent_system(self.model)
         
-        # Initialisation de l'agent contextuel
+        # Initialize contextual agent
         self.contextual_agent = ContextualAgent(self.model)
         
         self._initialized = True
@@ -246,89 +249,106 @@ class MultiAgentManager:
         print("   ├── Document Agent (document processing)")
         print("   └── Search Agent (web research & information gathering)")
 
+    def _format_final_response(self, result: Any) -> str:
+        """
+        Format the final response as a string, handling different response types.
+        
+        Args:
+            result: The result from the agent
+            
+        Returns:
+            Formatted string response
+        """
+        if isinstance(result, str):
+            return result
+        elif isinstance(result, dict):
+            # Format dictionary response
+            formatted_parts = []
+            
+            # Add task outcome if available
+            if 'task_outcome_detailed' in result:
+                formatted_parts.append(result['task_outcome_detailed'])
+            elif 'task_outcome_short' in result:
+                formatted_parts.append(result['task_outcome_short'])
+            
+            # Add additional context if available
+            if 'additional_context' in result:
+                formatted_parts.append("\nContexte supplémentaire:")
+                formatted_parts.append(result['additional_context'])
+            
+            return "\n".join(formatted_parts)
+        elif hasattr(result, 'observations'):
+            return str(result.observations)
+        else:
+            return str(result)
+
     def run_task(self, user_query: str, additional_args: Optional[Dict[str, Any]] = None) -> str:
         """
-        Execute a task using the multi-agent system, with context-aware routing.
+        Run a task through the multi-agent system.
+        
+        Args:
+            user_query: The user's query
+            additional_args: Additional arguments for context
+            
+        Returns:
+            The result of the task
         """
         if not self._initialized:
-            raise RuntimeError("Manager not initialized. Call initialize() first.")
+            raise RuntimeError("Multi-agent system not initialized. Call initialize() first.")
         
-        print(f"🎯 Processing task: {user_query[:100]}...")
+        print(f"🎯 Processing task: {user_query}...")
         
-        # Mise à jour du contexte avec les fichiers disponibles
-        if additional_args:
-            if 'pdf_context' in additional_args and 'available_files' in additional_args['pdf_context']:
-                for pdf_file in additional_args['pdf_context']['available_files']:
-                    file_name = pdf_file.get('name')
-                    if file_name and file_name in user_query:
-                        self.contextual_agent.update_file_context('pdf', file_name)
+        # 1. Process through contextual agent
+        reformulated_query = self.contextual_agent.process_query(user_query)
+        print(f"🔄 Reformulated query: {reformulated_query}")
+        
+        # 2. Prepare context for manager
+        manager_context = prepare_manager_context(additional_args or {})
+        print("🏗️ Context Prep: Preparing manager context")
+        
+        # 3. Build task description with context
+        task_description = build_simple_manager_task(reformulated_query, manager_context)
+        print("📝 Task Builder: Building manager task description")
+        
+        # 4. Run task through manager agent
+        try:
+            result = self.manager_agent.run(task_description)
+            print("✅ Task completed successfully!")
             
-            if 'csv_context' in additional_args and 'available_files' in additional_args['csv_context']:
-                for csv_file in additional_args['csv_context']['available_files']:
-                    file_name = csv_file.get('name')
-                    if file_name and file_name in user_query:
-                        self.contextual_agent.update_file_context('csv', file_name)
-        
-        # Traitement de la requête par l'agent contextuel
-        enriched_query = self.contextual_agent.process_query(user_query)
-        print(f"🔄 Reformulated query: {enriched_query}")
-        
-        # Préparation du contexte pour le manager agent
-        pdf_context = additional_args.get('pdf_context', {}) if additional_args else {}
-        csv_context = additional_args.get('csv_context', {}) if additional_args else {}
-        
-        available_pdfs_context = pdf_context.get('available_files', []) if pdf_context else []
-        available_csvs_context = csv_context.get('available_files', []) if csv_context else []
-        
-        manager_context = prepare_manager_context(available_pdfs_context, available_csvs_context)
-        manager_task = build_simple_manager_task(enriched_query, available_pdfs_context, available_csvs_context)
-        
-        # Exécution via le manager
-        result = self.manager_agent.run(
-            task=manager_task,
-            additional_args=additional_args or {}
-        )
-        
-        # Conversion du résultat en string si nécessaire
-        if hasattr(result, '__iter__') and not isinstance(result, (str, bytes)):
-            result = ''.join(str(chunk) for chunk in result)
-        
-        # Si le résultat a un attribut observations, l'utiliser
-        if hasattr(result, "observations"):
-            result = result.observations
-        
-        print("✅ Task completed successfully!")
-        return result
+            # Format the final response
+            formatted_result = self._format_final_response(result)
+            return formatted_result
+            
+        except Exception as e:
+            print(f"❌ Error during task execution: {str(e)}")
+            raise
 
     def reset(self):
-        """Reset all agents and context for a fresh conversation."""
-        if self._initialized:
-            # Reset all agents if they have a reset method
-            for agent in [self.manager_agent, self.data_analyst_agent, 
-                         self.document_agent, self.search_agent]:
-                if agent and hasattr(agent, 'reset'):
-                    agent.reset()
-        if self.contextual_agent:
-            self.contextual_agent.reset_context()
+        """Reset the multi-agent system."""
+        self._initialized = False
+        self.manager_agent = None
+        self.data_analyst_agent = None
+        self.document_agent = None
+        self.search_agent = None
+        self.contextual_agent = None
+        print("🔄 Multi-agent system reset")
 
     def get_context(self) -> Dict[str, Any]:
-        """
-        Get the current context from the contextual agent.
-        """
-        if self.contextual_agent:
-            return self.contextual_agent.get_context()
-        return {}
+        """Get the current context from the contextual agent."""
+        if not self._initialized or not self.contextual_agent:
+            return {}
+        return self.contextual_agent.get_context()
 
 
 def initialize_multiagent_system(model: OpenAIServerModel) -> MultiAgentManager:
     """
-    Initialize and return a MultiAgentManager instance.
+    Initialize a new multi-agent system.
     
     Args:
-        model: OpenAI model to use
+        model: OpenAI model to use for all agents
         
     Returns:
-        Initialized MultiAgentManager
+        Initialized MultiAgentManager instance
     """
     manager = MultiAgentManager(model)
     manager.initialize()
