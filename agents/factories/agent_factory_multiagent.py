@@ -115,7 +115,6 @@ Rules: Use imports from: {{authorized_imports}}"""
         # Apply custom system prompt using smolagents method
         agent.prompt_templates["system_prompt"] = custom_data_analyst_prompt
         
-        print(f"✅ Data Analyst Agent created")
         return agent
 
     def create_document_agent(self) -> ToolCallingAgent:
@@ -159,7 +158,6 @@ Observation: [Tool output with citations and sources]"""
             planning_interval=config.planning_interval
         )
         
-        print(f"✅ Document Agent created with unified PDF tool")
         return agent
 
     def create_search_agent(self) -> ToolCallingAgent:
@@ -197,13 +195,7 @@ Always structure your response in four parts:
 1. Thought: Your reasoning about what to do
 2. Action: The action to take
 3. Action Input: The input for the action
-4. Observation: The result of the action
-
-EXAMPLE:
-Thought: I need to search for current information about X
-Action: search_web
-Action Input: {"query": "X latest news"}
-Observation: I found the following information..."""
+4. Observation: The result of the action"""
 
         # Use ToolCallingAgent for web search as it's more suitable for single-timeline tasks
         web_tools = []
@@ -218,8 +210,6 @@ Observation: I found the following information..."""
             ])
         except ImportError as e:
             print(f"⚠️ Some web tools unavailable: {e}")
-        except Exception as e:
-            print(f"⚠️ DuckDuckGo tool configuration issue: {e}")
             # Fallback sans DuckDuckGo si problème
             web_tools.extend([
                 enhanced_visit_webpage,
@@ -237,7 +227,6 @@ Observation: I found the following information..."""
             planning_interval=config.planning_interval
         )
         
-        print(f"✅ Search Agent created")
         return agent
 
     def create_minimal_manager_agent(self, managed_agents: list) -> CodeAgent:
@@ -259,7 +248,6 @@ Observation: I found the following information..."""
             use_structured_outputs_internally=config.use_structured_outputs_internally
         )
         
-        print(f"✅ Manager Agent created")
         return agent
 
 
@@ -286,12 +274,5 @@ def create_multiagent_system(model: OpenAIServerModel) -> tuple[CodeAgent, CodeA
         document_agent,
         search_agent
     ])
-    
-    print("🚀 Multi-Agent System created following smolagents best practices!")
-    print("   - Manager: 1 tools + 3 agents")
-    print("   - Data Analyst: 3 specialized tools")
-    print("   - Document Agent: 2 unified PDF tool")
-    print("   - Search Agent: 5 web tools")
-    print("   - Follows smolagents principle: 'manager = pure delegation'")
     
     return manager, data_analyst, document_agent, search_agent 

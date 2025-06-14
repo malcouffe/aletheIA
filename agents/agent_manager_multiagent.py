@@ -1,6 +1,6 @@
 """
-Multi-Agent Manager Interface
-Implements smolagents best practices with specialized agents and minimal manager.
+Interface de Gestion Multi-Agents
+Implémente les meilleures pratiques smolagents avec des agents spécialisés et un gestionnaire minimal.
 """
 
 from smolagents import OpenAIServerModel, ToolCallingAgent, tool
@@ -13,13 +13,14 @@ from agents.core.embedding import get_embedding_function
 
 
 @tool
-def reformulate_query(query: str, context_str: str) -> str:
+def reformulate_query(query: str, context_str: str, language: str = "fr") -> str:
     """
-    Reformule une requête en tenant compte du contexte.
+    Reformule une requête en tenant compte du contexte et de la langue cible.
     
     Args:
         query: La requête originale à reformuler
         context_str: Le contexte sous forme de chaîne de caractères
+        language: La langue cible pour la reformulation (par défaut: "fr")
         
     Returns:
         La requête reformulée
@@ -38,7 +39,8 @@ class ContextualAgent:
             "recent_files": [],
             "dernier_csv": None,
             "dernier_pdf": None,
-            "interaction_history": []
+            "interaction_history": [],
+            "language": "fr"  # Langue par défaut
         }
         self.max_history = 20
         
@@ -52,7 +54,7 @@ class ContextualAgent:
             verbosity_level=0
         )
 
-    def process_query(self, query: str) -> str:
+    def process_query(self, query: str, language: str = "fr") -> str:
         """
         Processus en chaîne pour traiter une requête :
         1. Analyse du contexte actuel
@@ -62,29 +64,25 @@ class ContextualAgent:
         
         Args:
             query: Requête originale de l'utilisateur
+            language: Langue cible pour le traitement (par défaut: "fr")
             
         Returns:
             Requête enrichie et reformulée
         """
-        print("🔄 Contextual Agent: Début du traitement de la requête")
-        print(f"📝 Requête originale: {query}")
+        # Mise à jour de la langue dans le contexte
+        self.context["language"] = language
         
         # 1. Analyse du contexte actuel
         current_context = self._analyze_current_context()
-        print("📊 Contexte actuel analysé")
         
         # 2. Enrichissement avec l'historique
         enriched_context = self._enrich_with_history(current_context)
-        print("📚 Contexte enrichi avec l'historique")
         
         # 3. Reformulation de la requête
-        print("🔄 Début de la reformulation de la requête...")
         reformulated_query = self._reformulate_query(query, enriched_context)
-        print(f"✅ Requête reformulée: {reformulated_query}")
         
         # 4. Mise à jour du contexte
         self._update_context(query, reformulated_query)
-        print("📝 Contexte mis à jour avec la nouvelle interaction")
         
         return reformulated_query
 
@@ -96,7 +94,8 @@ class ContextualAgent:
             "recent_files": self.context["recent_files"][-5:],
             "dernier_csv": self.context["dernier_csv"],
             "dernier_pdf": self.context["dernier_pdf"],
-            "last_interactions": self.context["interaction_history"][-3:]
+            "last_interactions": self.context["interaction_history"][-3:],
+            "language": self.context["language"]
         }
 
     def _enrich_with_history(self, current_context: Dict[str, Any]) -> Dict[str, Any]:
@@ -111,11 +110,7 @@ class ContextualAgent:
         """
         Reformule la requête en tenant compte du contexte enrichi.
         """
-        print("🔄 Début de la reformulation avec le modèle OpenAI...")
-        
         try:
-            print("📡 Appel à l'API OpenAI pour la reformulation...")
-            
             # Construction d'un prompt plus détaillé pour la reformulation
             context_str = f"""
             Contexte actuel :
@@ -123,6 +118,7 @@ class ContextualAgent:
             - Dernier fichier CSV utilisé : {context['dernier_csv']}
             - Dernier fichier PDF utilisé : {context['dernier_pdf']}
             - Historique des interactions : {[h['content'] for h in context['last_interactions']]}
+            - Langue cible : {context['language']}
             
             Instructions pour la reformulation :
             1. La requête reformulée DOIT faire référence explicitement aux fichiers concernés (CSV ou PDF)
@@ -130,24 +126,23 @@ class ContextualAgent:
             3. Si la requête fait référence à "le rapport" ou "les données", préciser s'il s'agit du CSV ou du PDF
             4. La reformulation doit être claire et précise, sans phrases d'introduction ou de conclusion
             5. Conserver l'intention originale de la requête tout en la rendant plus spécifique
+            6. Adapter la reformulation à la langue cible spécifiée
             """
             
             response = self.reformulation_agent.run(
                 f"Reformule cette requête en la rendant plus précise et en faisant référence explicite aux fichiers : {query}",
                 additional_args={
                     "query": query,
-                    "context_str": context_str
+                    "context_str": context_str,
+                    "language": context["language"]
                 }
             )
             
             reformulated_query = response.strip()
-            print(f"✅ Réponse du modèle reçue: {reformulated_query}")
             return reformulated_query if reformulated_query else query
             
         except Exception as e:
-            print(f"⚠️ Erreur lors de la reformulation : {e}")
-            print(f"⚠️ Type d'erreur : {type(e)}")
-            print(f"⚠️ Détails de l'erreur : {str(e)}")
+            print(f"⚠️ Erreur lors de la reformulation : {str(e)}")
             return query
 
     def _update_context(self, original_query: str, reformulated_query: str) -> None:
@@ -157,11 +152,13 @@ class ContextualAgent:
         # Ajout de l'interaction à l'historique
         self.context["interaction_history"].append({
             "type": "user",
-            "content": original_query
+            "content": original_query,
+            "language": self.context["language"]
         })
         self.context["interaction_history"].append({
             "type": "assistant",
-            "content": reformulated_query
+            "content": reformulated_query,
+            "language": self.context["language"]
         })
         
         # Limiter la taille de l'historique
@@ -195,7 +192,8 @@ class ContextualAgent:
             "recent_files": [],
             "dernier_csv": None,
             "dernier_pdf": None,
-            "interaction_history": []
+            "interaction_history": [],
+            "language": "fr"  # Réinitialisation de la langue par défaut
         }
 
 
