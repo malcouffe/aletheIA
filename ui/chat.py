@@ -139,10 +139,12 @@ def _process_user_query(prompt, model, agent_manager, response_container=None):
                 progress_placeholder.markdown("🤖 **Agent en cours d'exécution...**")
         
         # Use the new clean AgentManager interface
-        final_response = agent_manager.run_query(
+        final_response = agent_manager.run_task(
             user_query=prompt,
-            available_pdfs_context=available_pdfs_context,
-            available_csvs_context=available_csvs_context
+            additional_args={
+                'pdf_context': {'available_files': available_pdfs_context},
+                'csv_context': {'available_files': available_csvs_context}
+            }
         )
         
         # Clear progress indicator

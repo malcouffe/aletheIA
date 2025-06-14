@@ -164,7 +164,7 @@ def build_simple_manager_task(
     Enhanced with debug logging and smolagents best practices.
     
     Args:
-        user_query: The user's query/request
+        user_query: The user's query/request (already enriched by contextual agent)
         available_pdfs_context: List of PDF file context dictionaries  
         available_csvs_context: List of CSV file context dictionaries
     
@@ -172,7 +172,7 @@ def build_simple_manager_task(
         Formatted task description optimized for smolagents delegation
     """
     print("📝 Task Builder: Building manager task description")
-    print(f"❓ Task Builder: User query: '{user_query}'")
+    print(f"❓ Task Builder: Enriched query: '{user_query}'")
     
     manager = ContextManager()
     
@@ -188,23 +188,19 @@ def build_simple_manager_task(
     print(f"💡 Task Builder: Generated {len(context_hints)} context hints")
     
     # Enhanced task format for better smolagents delegation
-    task = f"""User Query: "{user_query}"
+    task = f"""Enriched Query: "{user_query}"
 
 Available Resources:
 {chr(10).join(f"- {hint}" for hint in context_hints)}
 
 Instructions for Manager: 
-- Analyze the query and available resources
+- Analyze the enriched query and available resources
 - Delegate IMMEDIATELY to the appropriate specialist agent
 - Use debug logging to show delegation decision
-- Pass the complete user query to the specialist
-
-Route to the appropriate agent and provide a natural, conversational response in French."""
-
-    print(f"✅ Task Builder: Task description built ({len(task)} characters)")
-    print(f"🎯 Task Builder: Task optimized for smolagents delegation pattern")
-    
-    return task 
+- Pass the complete enriched query to the specialist
+"""
+    print("✅ Task Builder: Task description built successfully")
+    return task
 
 
  
