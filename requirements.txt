@@ -25,7 +25,7 @@ dataclasses-json==0.6.7
 datauri==1.0.0
 Deprecated==1.2.18
 distro==1.9.0
-duckduckgo_search==7.5.5
+duckduckgo_search==8.0.4
 durationpy==0.9
 eval_type_backport==0.2.2
 fastapi==0.115.12
@@ -99,7 +99,7 @@ pandas==2.2.0
 pillow==11.1.0
 plotly==6.1.2
 posthog==3.24.1
-primp==0.14.0
+primp==0.15.0
 propcache==0.3.1
 protobuf==5.29.4
 pulsar-client==3.6.1
