@@ -9,7 +9,6 @@ import openai
 
 from agents.factories.agent_factory_multiagent import create_multiagent_system
 from agents.core.context import prepare_manager_context, build_simple_manager_task
-from agents.core.embedding import get_embedding_function
 
 
 @tool

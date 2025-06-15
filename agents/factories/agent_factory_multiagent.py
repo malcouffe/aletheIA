@@ -3,19 +3,35 @@ Multi-Agent Factory Following Smolagents Best Practices
 Creates a manager agent with minimal tools that delegates to specialized agents.
 """
 
-import streamlit as st
-from smolagents import CodeAgent, ToolCallingAgent, DuckDuckGoSearchTool, OpenAIServerModel
-from typing import Optional
+# Standard library imports
+from typing import Optional, Tuple
 
-from ..config.agent_config import AGENT_CONFIGS, AGENT_DESCRIPTIONS
+# Third-party imports
+import streamlit as st
+from smolagents import (
+    CodeAgent,
+    ToolCallingAgent,
+    DuckDuckGoSearchTool,
+    OpenAIServerModel
+)
+
+# Local imports
+from ..config.agent_config import (
+    AGENT_CONFIGS,
+    AGENT_DESCRIPTIONS,
+    DATA_ANALYST_IMPORTS
+)
+from ..core.embedding import get_embedding_function
 from ..tools import (
-    # Unified data tools
-    data_loader, display_figures,
-    # RAG tools - unified tool only
+    data_loader,
+    display_figures,
     unified_pdf_search_and_analyze
 )
-from ..tools.enhanced_web_tools import enhanced_visit_webpage, bulk_visit_webpages, extract_financial_data
-from ..core.embedding import get_embedding_function
+from ..tools.enhanced_web_tools import (
+    enhanced_visit_webpage,
+    bulk_visit_webpages,
+    extract_financial_data
+)
 
 
 class MultiAgentFactory:
@@ -26,63 +42,17 @@ class MultiAgentFactory:
         self.embedding_function = get_embedding_function()
     
     def create_data_analyst_agent(self) -> CodeAgent:
-        """Create specialized data analyst agent (unchanged from current implementation)."""
+        """Create specialized data analyst agent."""
         config = AGENT_CONFIGS["data_analyst"]
         
-        data_analyst_description = """Expert data analyst specialized in comprehensive data analysis and visualization.
-
-CORE CAPABILITIES:
-- **Data Loading & Processing**: Load CSV files, clean data, handle missing values
-- **Statistical Analysis**: Descriptive statistics, correlations, hypothesis testing
-- **Data Visualization**: Create plots with matplotlib, seaborn, and plotly
-- **Advanced Analytics**: Clustering, classification, regression analysis
-- **Data Transformation**: Grouping, pivoting, merging datasets
-
-AVAILABLE TOOLS:
-- data_loader(): Unified tool for loading CSV files and discovering available data
-- display_figures(): Unified tool for displaying matplotlib and plotly visualizations
-
-TASK HANDLING APPROACH:
-1. Always start by understanding the data structure
-2. Perform exploratory data analysis (EDA)
-3. Apply appropriate statistical methods
-4. Create clear, informative visualizations
-5. Provide actionable insights and conclusions
-
-RESPONSE FORMAT:
-Always structure your response in four parts:
-1. Thought: Your reasoning about what to do
-2. Action: The action to take
-3. Action Input: The input for the action
-4. Observation: The result of the action
-
-EXAMPLE:
-Thought: I need to analyze the correlation between age and survival rate
-Action: analyze_data
-Action Input: {"method": "correlation", "columns": ["age", "survived"]}
-Observation: The correlation analysis shows a negative correlation of -0.077 between age and survival...
-
-CRITICAL TOOL USAGE:
-- After creating ANY chart: IMMEDIATELY call display_figures() with appropriate figure_type
-- Use print() statements to log important findings for debugging
-- Handle errors gracefully and provide helpful troubleshooting information"""
-
         agent = CodeAgent(
             tools=[data_loader, display_figures],
             model=self.model,
-            additional_authorized_imports=[
-                "numpy", "pandas", "matplotlib.pyplot", "seaborn", 
-                "plotly.express", "plotly.graph_objects", "plotly.subplots", "scipy.stats",
-                "sklearn.preprocessing", "sklearn.cluster", "warnings",
-                "streamlit", "os", "sys", "glob",
-                "datetime", "math", "statistics", "json", "csv",
-                "matplotlib.patches", "matplotlib.colors", "pandas.api.types",
-                "scipy.cluster", "scipy.optimize", "sklearn.metrics", "sklearn.model_selection"
-            ],
+            additional_authorized_imports=DATA_ANALYST_IMPORTS,
             max_steps=config.max_steps,
             verbosity_level=config.verbosity_level,
             name="data_analyst",
-            description=data_analyst_description,
+            description=AGENT_DESCRIPTIONS["data_analyst"],
             stream_outputs=config.stream_outputs,
             planning_interval=config.planning_interval,
             use_structured_outputs_internally=config.use_structured_outputs_internally
@@ -112,49 +82,20 @@ Always structure your response in four parts:
 
 Rules: Use imports from: {{authorized_imports}}"""
 
-        # Apply custom system prompt using smolagents method
         agent.prompt_templates["system_prompt"] = custom_data_analyst_prompt
-        
         return agent
 
     def create_document_agent(self) -> ToolCallingAgent:
         """Create document agent with unified PDF search and analysis capabilities."""
-        from ..tools.rag_tools import unified_pdf_search_and_analyze
-        
         config = AGENT_CONFIGS["search_agent"]  # Reuse search agent config for simplicity
         
-        document_description = """Expert PDF document analyst specialized in retrieving and analyzing content from indexed documents.
-
-CORE MISSION: Search PDF documents and provide structured responses with citations.
-
-TOOL AVAILABLE:
-- unified_pdf_search_and_analyze(query): Search and analyze PDF content
-
-INSTRUCTIONS:
-1. Always call unified_pdf_search_and_analyze() with the user's question
-2. Follow the structured response format
-3. The tool already handles citations [1], [2], etc. and sources
-
-RESPONSE FORMAT:
-Always structure your response in four parts:
-1. Thought: Your reasoning about what to do
-2. Action: The action to take
-3. Action Input: The input for the action
-4. Observation: The result of the action
-
-EXAMPLE:
-Thought: I need to search for information about internal controls
-Action: unified_pdf_search_and_analyze
-Action Input: {"query": "internal controls"}
-Observation: [Tool output with citations and sources]"""
-
         agent = ToolCallingAgent(
             tools=[unified_pdf_search_and_analyze],
             model=self.model,
             max_steps=config.max_steps,
             verbosity_level=config.verbosity_level,
             name="document_agent",
-            description=document_description,
+            description=AGENT_DESCRIPTIONS["rag_agent"],  # Using rag_agent description
             planning_interval=config.planning_interval
         )
         
@@ -164,43 +105,9 @@ Observation: [Tool output with citations and sources]"""
         """Create specialized search agent for web research."""
         config = AGENT_CONFIGS["search_agent"]
         
-        search_description = """Expert web researcher specializing in comprehensive information gathering.
-
-CORE CAPABILITIES:
-- Web search using DuckDuckGo
-- Enhanced webpage analysis with content extraction
-- Bulk webpage processing for comprehensive research
-- Financial data extraction from web sources
-
-AVAILABLE TOOLS:
-- DuckDuckGoSearchTool(): Web search functionality
-- enhanced_visit_webpage(): Deep webpage content analysis
-- bulk_visit_webpages(): Process multiple pages efficiently
-- extract_financial_data(): Extract financial information
-
-RESEARCH APPROACH:
-1. Use targeted search queries for best results
-2. Visit and analyze relevant webpages
-3. Extract and synthesize information from multiple sources
-4. Provide comprehensive findings with sources
-
-TOOL USAGE BEST PRACTICES:
-- Start with broad searches, then narrow down with specific queries
-- Visit 2-3 most relevant pages for comprehensive coverage
-- Use bulk_visit_webpages() for multiple related URLs
-- Always cite sources in your response
-
-RESPONSE FORMAT:
-Always structure your response in four parts:
-1. Thought: Your reasoning about what to do
-2. Action: The action to take
-3. Action Input: The input for the action
-4. Observation: The result of the action"""
-
         # Use ToolCallingAgent for web search as it's more suitable for single-timeline tasks
         web_tools = []
         try:
-            # Configuration simple sans paramètres pour éviter les erreurs
             search_tool = DuckDuckGoSearchTool()
             web_tools.extend([
                 search_tool,
@@ -223,7 +130,7 @@ Always structure your response in four parts:
             max_steps=config.max_steps,
             verbosity_level=config.verbosity_level,
             name="search_agent",
-            description=search_description,
+            description=AGENT_DESCRIPTIONS["search_agent"],
             planning_interval=config.planning_interval
         )
         
@@ -251,7 +158,7 @@ Always structure your response in four parts:
         return agent
 
 
-def create_multiagent_system(model: OpenAIServerModel) -> tuple[CodeAgent, CodeAgent, ToolCallingAgent, ToolCallingAgent]:
+def create_multiagent_system(model: OpenAIServerModel) -> Tuple[CodeAgent, CodeAgent, ToolCallingAgent, ToolCallingAgent]:
     """
     Create a multi-agent system following smolagents best practices.
     
