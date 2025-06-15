@@ -58,36 +58,38 @@ class MultiAgentFactory:
             use_structured_outputs_internally=config.use_structured_outputs_internally
         )
         
-        # Set custom system prompt using smolagents best practice method
-        custom_data_analyst_prompt = """You are an expert data analyst.
+        # Prompt template en Français pour l'agent data_analyst
+#         custom_data_analyst_prompt = """
+# Vous êtes un expert en analyse de données.
 
-RESPONSE FORMAT:
-Always structure your response in four parts:
-1. Thought: Your reasoning about what to do
-2. Action: The action to take
-3. Action Input: The input for the action
-4. Observation: The result of the action
+# FORMAT DE RÉPONSE :
+# Structurez toujours votre réponse en quatre parties :
+# 1. Thought : votre raisonnement sur l'étape suivante
+# 2. Action : l'action à exécuter
+# 3. Action Input : les paramètres JSON pour l'action
+# 4. Observation : le résultat obtenu
 
-{%- for tool in tools.values() %}
-- {{ tool.name }}: {{ tool.description }}
-    Takes inputs: {{tool.inputs}}
-    Returns an output of type: {{tool.output_type}}
-{%- endfor %}
+# {%- for tool in tools.values() %}
+# - {{ tool.name }} : {{ tool.description }}
+#   Prend en entrée : {{ tool.inputs }}
+#   Retourne : {{ tool.output_type }}
+# {%- endfor %}
 
-{%- if managed_agents and managed_agents.values() | list %}
-{%- for agent in managed_agents.values() %}
-- {{ agent.name }}: {{ agent.description }}
-{%- endfor %}
-{%- endif %}
+# {%- if managed_agents and managed_agents.values() | list %}
+# Agents gérés :
+# {%- for agent in managed_agents.values() %}
+# - {{ agent.name }} : {{ agent.description }}
+# {%- endfor %}
+# {%- endif %}
 
-Rules: Use imports from: {{authorized_imports}}"""
-
-        agent.prompt_templates["system_prompt"] = custom_data_analyst_prompt
+# Règle : utilisez uniquement les imports autorisés : {{ authorized_imports }}
+# """
+#         agent.prompt_templates["system_prompt"] = custom_data_analyst_prompt
         return agent
 
     def create_document_agent(self) -> ToolCallingAgent:
         """Create document agent with unified PDF search and analysis capabilities."""
-        config = AGENT_CONFIGS["search_agent"]  # Reuse search agent config for simplicity
+        config = AGENT_CONFIGS["rag_agent"]
         
         agent = ToolCallingAgent(
             tools=[unified_pdf_search_and_analyze],
@@ -95,17 +97,32 @@ Rules: Use imports from: {{authorized_imports}}"""
             max_steps=config.max_steps,
             verbosity_level=config.verbosity_level,
             name="document_agent",
-            description=AGENT_DESCRIPTIONS["rag_agent"],  # Using rag_agent description
+            description=AGENT_DESCRIPTIONS["rag_agent"],
             planning_interval=config.planning_interval
         )
-        
+
+        # Prompt template en Français pour l'agent document_agent
+#         custom_document_prompt = """
+# Vous êtes un spécialiste de l'analyse de documents PDF.
+
+# FORMAT DE RÉPONSE :
+# 1. Thought : votre réflexion
+# 2. Action : unified_pdf_search_and_analyze
+# 3. Action Input : {"query": "<votre requête>"}
+# 4. Observation : extraits issus du PDF avec citations
+
+# OUTIL :
+# - unified_pdf_search_and_analyze(query) : recherche et analyse dans les PDF indexés
+
+# Règle : citez toujours chaque passage au format [1], [2], ...
+# """
+#         agent.prompt_templates["system_prompt"] = custom_document_prompt
         return agent
 
     def create_search_agent(self) -> ToolCallingAgent:
         """Create specialized search agent for web research."""
         config = AGENT_CONFIGS["search_agent"]
         
-        # Use ToolCallingAgent for web search as it's more suitable for single-timeline tasks
         web_tools = []
         try:
             search_tool = DuckDuckGoSearchTool()
@@ -115,9 +132,7 @@ Rules: Use imports from: {{authorized_imports}}"""
                 bulk_visit_webpages,
                 extract_financial_data
             ])
-        except ImportError as e:
-            print(f"⚠️ Some web tools unavailable: {e}")
-            # Fallback sans DuckDuckGo si problème
+        except ImportError:
             web_tools.extend([
                 enhanced_visit_webpage,
                 bulk_visit_webpages,
@@ -133,18 +148,33 @@ Rules: Use imports from: {{authorized_imports}}"""
             description=AGENT_DESCRIPTIONS["search_agent"],
             planning_interval=config.planning_interval
         )
-        
+
+        # Prompt template en Français pour l'agent search_agent
+#         custom_search_prompt = """
+# Vous êtes un expert en recherche web et synthèse d'information.
+
+# FORMAT DE RÉPONSE :
+# 1. Thought : votre raisonnement pour la recherche
+# 2. Action : l'outil à utiliser
+# 3. Action Input : paramètres JSON de l'outil
+# 4. Observation : résultats et sources
+
+# OUTILS DISPONIBLES :
+# {%- for tool in tools.values() %}
+# - {{ tool.name }} : {{ tool.description }}
+# {%- endfor %}
+
+# Règle : citez toujours chaque information avec une source claire.
+# """
+#         agent.prompt_templates["system_prompt"] = custom_search_prompt
         return agent
 
     def create_minimal_manager_agent(self, managed_agents: list) -> CodeAgent:
         """Create minimal manager agent following smolagents best practices."""
         config = AGENT_CONFIGS["manager_agent"]
         
-        # PURE DELEGATION - no execution tools as per smolagents best practices
-        coordination_tools = []  # Manager = pure delegation, no execution
-        
         agent = CodeAgent(
-            tools=coordination_tools,
+            tools=[],  # aucun outil, pure délégation
             model=self.model,
             max_steps=config.max_steps,
             verbosity_level=config.verbosity_level,
@@ -154,11 +184,59 @@ Rules: Use imports from: {{authorized_imports}}"""
             planning_interval=config.planning_interval,
             use_structured_outputs_internally=config.use_structured_outputs_internally
         )
-        
+
+        # Prompt template en Français pour l'agent manager_agent
+#         custom_manager_prompt = """
+# Vous êtes un agent manager dont le SEUL rôle est de déléguer les tâches aux agents spécialisés.
+
+# AGENTS DISPONIBLES :
+# {%- for agent in managed_agents.values() %}
+# - {{ agent.name }} : {{ agent.description }}
+# {%- endfor %}
+
+# FORMAT DE RÉPONSE OBLIGATOIRE :
+# 1. Thought : votre raisonnement sur le choix de l'agent spécialisé
+# 2. Action : nom de l'agent spécialisé à appeler
+# 3. Action Input : la requête utilisateur complète à transmettre
+# 4. Observation : résultat retourné par l'agent spécialisé
+
+# EXEMPLES DE DÉLÉGATION :
+
+# 1. Analyse de données CSV :
+# Thought: La requête concerne l'analyse d'un dataset CSV
+# Action: data_analyst
+# Action Input: "Analyse le dataset bank_transaction"
+# Observation: [résultat de data_analyst]
+
+# 2. Recherche dans des documents PDF :
+# Thought: La requête concerne la recherche dans des documents PDF
+# Action: document_agent
+# Action Input: "Trouve les informations sur les contrôles internes dans les rapports"
+# Observation: [résultat de document_agent]
+
+# 3. Recherche web :
+# Thought: La requête nécessite une recherche d'informations sur le web
+# Action: search_agent
+# Action Input: "Trouve les dernières informations sur les régulations bancaires"
+# Observation: [résultat de search_agent]
+
+# 4. Analyse de données avec visualisation :
+# Thought: La requête demande une analyse avec des graphiques
+# Action: data_analyst
+# Action Input: "Crée des visualisations pour le dataset bank_transaction"
+# Observation: [résultat de data_analyst]
+
+# RÈGLES CRITIQUES :
+# - DÉLÉGUER IMMÉDIATEMENT - ne jamais exécuter de code
+# - Ne jamais modifier la requête utilisateur
+# - Ne jamais traiter la tâche directement
+# - Toujours utiliser le format de réponse exact ci-dessus
+# - Toujours choisir l'agent le plus approprié pour la tâche
+# """
+#         agent.prompt_templates["system_prompt"] = custom_manager_prompt
         return agent
 
-
-def create_multiagent_system(model: OpenAIServerModel) -> Tuple[CodeAgent, CodeAgent, ToolCallingAgent, ToolCallingAgent]:
+def create_multiagent_system(model: OpenAIServerModel) -> Tuple[ToolCallingAgent, CodeAgent, ToolCallingAgent, ToolCallingAgent]:
     """
     Create a multi-agent system following smolagents best practices.
     
