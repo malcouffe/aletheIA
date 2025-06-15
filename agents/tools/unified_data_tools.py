@@ -190,6 +190,17 @@ def display_figures(figures_dict: Dict[str, Any], figure_type: str = "auto") -> 
         figures_dict: Dictionary mapping figure names to figure objects.
                      Maximum 10 figures per call to prevent memory issues.
                      Use descriptive names: {"sales_trend": fig1, "correlation_heatmap": fig2}
+                     
+                     CORRECT USAGE:
+                     - Matplotlib: fig, ax = plt.subplots() -> {"name": fig}
+                     - Seaborn: plot = sns.histplot(data) -> {"name": plot.get_figure()}
+                     - Plotly: fig = go.Figure() -> {"name": fig}
+                     
+                     INCORRECT USAGE:
+                     - {"name": plt}  # Don't pass the library
+                     - {"name": sns}  # Don't pass the library
+                     - {"name": go}   # Don't pass the library
+                     
         figure_type: Type of figures to display:
                     - "matplotlib": For matplotlib/seaborn figures
                     - "plotly": For plotly figures
@@ -211,6 +222,12 @@ def display_figures(figures_dict: Dict[str, Any], figure_type: str = "auto") -> 
         ax.plot([1, 2, 3], [1, 4, 2])
         display_figures({"line_plot": fig}, figure_type="matplotlib")
         
+        # Seaborn figure
+        import seaborn as sns
+        plot = sns.histplot(data=df, x='column')
+        fig = plot.get_figure()  # Important: get the figure object
+        display_figures({"histogram": fig}, figure_type="matplotlib")
+        
         # Plotly figure
         fig = go.Figure(data=go.Bar(y=[2, 3, 1]))
         display_figures({"bar_chart": fig}, figure_type="plotly")
@@ -222,21 +239,50 @@ def display_figures(figures_dict: Dict[str, Any], figure_type: str = "auto") -> 
     
     # Validate input
     if not isinstance(figures_dict, dict):
-        error_msg = "❌ ERROR: Expected dictionary of figures, received: " + str(type(figures_dict))
+        error_msg = """❌ ERROR: Expected dictionary of figures, received: """ + str(type(figures_dict)) + """
+
+💡 CORRECT USAGE:
+1. For matplotlib:
+   fig, ax = plt.subplots()
+   ax.plot(data)
+   display_figures({"chart_name": fig})
+
+2. For seaborn:
+   plot = sns.histplot(data)
+   fig = plot.get_figure()
+   display_figures({"chart_name": fig})
+
+3. For plotly:
+   fig = go.Figure()
+   display_figures({"chart_name": fig})
+
+❌ DO NOT pass the library itself (plt, sns, or go)"""
         print(error_msg)
-        return error_msg + "\n\n💡 CORRECT FORMAT: {\"figure_name\": figure_object}"
+        return error_msg
     
     if not figures_dict:
-        warning_msg = "⚠️ WARNING: Empty figures dictionary provided"
+        warning_msg = """⚠️ WARNING: Empty figures dictionary provided
+
+💡 TIP: Make sure to create figures before displaying them. Example:
+fig, ax = plt.subplots()
+ax.plot(data)
+display_figures({"chart_name": fig})"""
         print(warning_msg)
-        return warning_msg + "\n\n💡 TIP: Make sure to create figures before displaying them"
+        return warning_msg
     
     # Check figure limit
     max_figures = VISUALIZATION_CONFIG["max_figures_per_call"]
     if len(figures_dict) > max_figures:
-        error_msg = f"❌ ERROR: Too many figures ({len(figures_dict)}). Maximum {max_figures} allowed per call."
+        error_msg = f"""❌ ERROR: Too many figures ({len(figures_dict)}). Maximum {max_figures} allowed per call.
+
+💡 SOLUTION: Split into multiple calls with ≤{max_figures} figures each. Example:
+# First call
+display_figures({{"chart1": fig1, "chart2": fig2}})
+
+# Second call
+display_figures({{"chart3": fig3, "chart4": fig4}})"""
         print(error_msg)
-        return error_msg + f"\n\n💡 SOLUTION: Split into multiple calls with ≤{max_figures} figures each"
+        return error_msg
     
     displayed_count = 0
     failed_figures = []
@@ -265,7 +311,18 @@ def display_figures(figures_dict: Dict[str, Any], figure_type: str = "auto") -> 
                     displayed_count += 1
                     print(f"   ✅ Successfully displayed matplotlib figure: {fig_name}")
                 else:
-                    failed_figures.append(f"{fig_name}: Not a valid matplotlib figure object")
+                    failed_figures.append(f"""{fig_name}: Not a valid matplotlib figure object
+
+💡 TROUBLESHOOTING:
+1. Make sure you're passing the figure object, not the library:
+   fig, ax = plt.subplots()  # Correct
+   display_figures({{"name": fig}})  # Correct
+   display_figures({{"name": plt}})  # Incorrect
+
+2. For seaborn plots, get the figure object:
+   plot = sns.histplot(data)
+   fig = plot.get_figure()  # Important!
+   display_figures({{"name": fig}})""")
             
             # Handle plotly figures
             elif figure_type == "plotly":
@@ -274,13 +331,31 @@ def display_figures(figures_dict: Dict[str, Any], figure_type: str = "auto") -> 
                     displayed_count += 1
                     print(f"   ✅ Successfully displayed plotly figure: {fig_name}")
                 else:
-                    failed_figures.append(f"{fig_name}: Not a valid plotly figure object")
+                    failed_figures.append(f"""{fig_name}: Not a valid plotly figure object
+
+💡 TROUBLESHOOTING:
+1. Make sure you're passing a go.Figure object:
+   fig = go.Figure()  # Correct
+   display_figures({{"name": fig}})  # Correct
+   display_figures({{"name": go}})   # Incorrect""")
             
             else:
-                failed_figures.append(f"{fig_name}: Invalid figure_type '{figure_type}'")
+                failed_figures.append(f"""{fig_name}: Invalid figure_type '{figure_type}'
+
+💡 TROUBLESHOOTING:
+Valid figure types are:
+- "matplotlib": For matplotlib/seaborn figures
+- "plotly": For plotly figures
+- "auto": (default) Automatically detect figure type""")
                 
         except Exception as e:
-            error_details = f"{fig_name}: {str(e)}"
+            error_details = f"""{fig_name}: {str(e)}
+
+💡 TROUBLESHOOTING:
+1. Check that your figure object is valid
+2. Make sure you're passing the figure object, not the library
+3. For seaborn plots, use .get_figure() method
+4. For plotly, ensure you're passing a go.Figure instance"""
             failed_figures.append(error_details)
             print(f"   ❌ Error displaying {fig_name}: {str(e)}")
             st.error(f"Error displaying figure {fig_name}: {str(e)}")
@@ -299,6 +374,7 @@ def display_figures(figures_dict: Dict[str, Any], figure_type: str = "auto") -> 
         result_parts.append("   - For seaborn: use .get_figure() method")
         result_parts.append("   - For plotly: ensure objects are go.Figure instances")
         result_parts.append("   - Check that figure objects are not None")
+        result_parts.append("   - Make sure you're passing the figure object, not the library itself")
     
     if displayed_count > 0:
         result_parts.append(f"\n🧹 MEMORY: Closed {displayed_count} figures to free memory")

@@ -22,22 +22,22 @@ class AgentSettings:
 AGENT_CONFIGS = {
     "search_agent": AgentSettings(
         max_steps=8,
-        verbosity_level=1,
+        verbosity_level=3,
         planning_interval=3
     ),
     "data_analyst": AgentSettings(
         max_steps=15,
-        verbosity_level=1,
+        verbosity_level=3,
         planning_interval=5
     ),
     "rag_agent": AgentSettings(
         max_steps=6,
-        verbosity_level=2,
+        verbosity_level=3,
         planning_interval=3
     ),
     "manager_agent": AgentSettings(
         max_steps=2,
-        verbosity_level=1,
+        verbosity_level=2,
         planning_interval=None
     )
 }

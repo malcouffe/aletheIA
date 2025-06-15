@@ -73,7 +73,8 @@ def display_chat_interface(model, agent_manager):
                     formatted_response = _format_agent_response_for_history(final_response)
                 else:
                     # Fallback to regular text display
-                    formatted_response = _format_agent_response(final_response)
+                    # Affichage direct de la réponse brute
+                    formatted_response = str(final_response)
                     st.markdown(formatted_response)
                 
                 # Store the formatted response in session state with timestamp
@@ -202,36 +203,13 @@ def _process_user_query(prompt, model, agent_manager, response_container=None):
         return error_msg
 
 
-def _format_agent_response(response):
-    """Format the agent response for better display - simplified approach."""
-    if not response:
-        return "Aucune réponse générée."
-    
-    # Convert to string and basic cleanup
-    formatted_response = str(response).strip()
-    
-    # Remove common wrapper patterns
-    if formatted_response.startswith("final_answer(") and formatted_response.endswith(")"):
-        # Extract content from final_answer() wrapper
-        start_quote = formatted_response.find('"') + 1
-        end_quote = formatted_response.rfind('"')
-        if start_quote > 0 and end_quote > start_quote:
-            formatted_response = formatted_response[start_quote:end_quote]
-    
-    # Basic cleanup - trust the LLM to provide natural language
-    formatted_response = formatted_response.replace('\\n', '\n')
-    formatted_response = formatted_response.replace('\\"', '"')
-    
-    return formatted_response if formatted_response else "Aucune réponse générée."
-
-
 def _format_agent_response_for_history(response):
     """Format agent response for chat history when interactive display is used."""
     if not response:
         return "Aucune réponse générée."
     
     # For RAG responses with interactive display, store a clean summary
-    formatted_response = _format_agent_response(response)
+    formatted_response = str(response)
     
     # Remove the streamlit display markers from history
     if "```streamlit_rag_display" in formatted_response:
