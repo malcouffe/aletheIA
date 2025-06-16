@@ -14,7 +14,7 @@ from ..config.agent_config import VISUALIZATION_CONFIG
 
 
 @tool
-def data_loader(file_context: str, mode: str = "auto") -> str:
+def data_loader(file_context: str, mode: str = "auto") -> Union[str, pd.DataFrame]:
     """
     Unified data loading and discovery tool following smolagents best practices.
     
@@ -30,11 +30,9 @@ def data_loader(file_context: str, mode: str = "auto") -> str:
     
     Returns:
         For mode="load" or auto-detected load:
-            Detailed data summary with shape, columns, preview, and loading instructions.
-            Includes missing values analysis and usage guidance.
-        
+            Returns the pandas DataFrame containing the data
         For mode="discover" or auto-detected discovery:
-            List of available CSV files with their locations and basic information.
+            Returns a string containing list of available CSV files with their locations and basic information.
     
     Error Handling:
         - "File not found": Check filename spelling and file location
@@ -108,7 +106,7 @@ def _discover_files(search_dirs: list) -> str:
     return "\n".join(response)
 
 
-def _load_file(file_context: str, search_dirs: list) -> str:
+def _load_file(file_context: str, search_dirs: list) -> Union[str, pd.DataFrame]:
     """Helper function to load a specific CSV file."""
     possible_paths = []
     
@@ -138,7 +136,8 @@ def _load_file(file_context: str, search_dirs: list) -> str:
         try:
             if os.path.exists(path):
                 df = pd.read_csv(path)
-                return _generate_data_summary(df, path)
+                print(_generate_data_summary(df, path))  # Print the summary but return the DataFrame
+                return df
         except Exception as e:
             print(f"⚠️ Error loading {path}: {str(e)}")
             continue
