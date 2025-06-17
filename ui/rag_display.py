@@ -1,201 +1,378 @@
 """
-Affichage style NotebookLM pour les réponses RAG.
-Interface unifiée qui lie la réponse de l'agent aux sources avec des citations numérotées.
+Affichage RAG SIMPLIFIÉ - Interface claire et robuste.
 """
 
 import streamlit as st
 import json
 import re
 from typing import Dict, List, Any, Optional
+import time
 
 
 def display_notebooklm_response(agent_response: str, sources_data: Dict, query: str = "") -> None:
     """
-    Affichage principal style NotebookLM avec réponse intégrée et sources numérotées.
-    
-    Args:
-        agent_response: Réponse de l'agent avec citations [1], [2], etc.
-        sources_data: Données des sources parsed du JSON
-        query: Requête originale
+    Affichage principal des sources RAG - VERSION SIMPLIFIÉE.
     """
+    print(f"🎨 RAG Display: Starting simplified display...")
+    
+    # Validation simple
+    if not sources_data or not isinstance(sources_data, dict):
+        st.error("❌ Données sources invalides")
+        st.markdown(agent_response)
+        return
+    
+    results = sources_data.get("results", [])
+    if not results:
+        st.info("📚 Aucune source trouvée")
+        st.markdown(agent_response)
+        return
+    
+    print(f"✅ RAG Display: Displaying {len(results)} sources")
+    
     st.markdown("---")
     
-    # 1. Réponse de l'agent avec citations intégrées
-    st.markdown("### 💬 Réponse")
+    # Afficher la réponse seulement si elle contient du contenu utile
+    if agent_response and agent_response.strip() and agent_response.strip() != "Aucune réponse disponible." and len(agent_response.strip()) > 10:
+        st.markdown("### 💬 Réponse")
+        enhanced_response = _highlight_citations(agent_response)
+        st.markdown(enhanced_response, unsafe_allow_html=True)
+        st.markdown("---")
     
-    # Parse les citations dans la réponse et les rend cliquables
-    enhanced_response = _enhance_citations_in_response(agent_response, sources_data)
-    st.markdown(enhanced_response, unsafe_allow_html=True)
-    
-    # 2. Sources numérotées correspondantes
+    # Sources dans un expander
     st.markdown("### 📚 Sources")
-    _display_numbered_sources(sources_data, query)
+    
+    # Bouton pour copier toutes les citations
+    if st.button("📋 Copier toutes les citations", key="copy_all_citations"):
+        all_citations = _generate_citations_text(results)
+        st.code(all_citations, language="text")
+        st.success("✅ Toutes les citations affichées ci-dessus - vous pouvez les copier !")
+    
+    with st.expander(f"🔍 **{len(results)} source(s) trouvée(s)** - Cliquez pour voir les passages complets", expanded=True):
+        _display_simple_sources(results)
     
     st.markdown("---")
+    print(f"✅ RAG Display: Display completed")
 
 
-def _enhance_citations_in_response(response: str, sources_data: Dict) -> str:
-    """
-    Améliore les citations [1], [2] dans la réponse pour les rendre visuelles.
-    """
+# Fonction _display_citations_summary supprimée - cause du HTML bugué
+
+
+def _generate_citations_text(results: List[Dict]) -> str:
+    """Génère un texte formaté des citations pour copier-coller."""
+    if not results:
+        return "Aucune citation disponible."
+    
+    citations_text = "CITATIONS ET SOURCES :\n\n"
+    
+    for i, result in enumerate(results, 1):
+        try:
+            content = result.get("content", "").strip()
+            metadata = result.get("metadata", {})
+            page = metadata.get("page", "?")
+            source = metadata.get("source", f"Document {i}")
+            
+            citations_text += f"[{i}] {source}, page {page}\n"
+            citations_text += f'    "{content}"\n\n'
+            
+        except Exception as e:
+            citations_text += f"[{i}] Erreur: {e}\n\n"
+    
+    return citations_text
+
+
+def _highlight_citations(response: str) -> str:
+    """Colore les citations [1], [2], [SOURCE-1], [SOURCE-2], etc. et corrige les citations déformées."""
     if not response:
         return "Aucune réponse disponible."
     
-    # Trouve toutes les citations [1], [2], etc.
-    citation_pattern = r'\[(\d+)\]'
-    citations = re.findall(citation_pattern, response)
+    # D'abord, nettoyer et corriger les citations déformées
+    result = response
     
-    # Remplace chaque citation par une version stylée
-    enhanced_response = response
-    for citation_num in set(citations):
-        old_citation = f"[{citation_num}]"
-        new_citation = f'<span style="background-color: #e3f2fd; color: #1976d2; padding: 2px 6px; border-radius: 12px; font-size: 0.85em; font-weight: bold;">[{citation_num}]</span>'
-        enhanced_response = enhanced_response.replace(old_citation, new_citation)
+    # Corriger les citations déformées courantes
+    # |SOURCE-1] → [SOURCE-1]
+    result = re.sub(r'\|SOURCE-(\d{1,2})\]', r'[SOURCE-\1]', result)
+    # |^0] → [1], |^1] → [2], etc. (caractères corrompus)
+    result = re.sub(r'\|\^(\d{1,2})\]', lambda m: f'[{int(m.group(1)) + 1}]', result)
+    # |1] → [1], |2] → [2] (pipe au lieu de crochet ouvrant)
+    result = re.sub(r'\|(\d{1,2})\]', r'[\1]', result)
     
-    return enhanced_response
+    # Améliorer l'affichage du nouveau format avec pages
+    # Convertir les pages markdown en HTML stylé
+    result = re.sub(r'📄 \*\*Page (\d+)\*\*:', 
+                   r'<div style="background: #f0f8ff; padding: 8px; border-left: 3px solid #1976d2; margin: 10px 0; border-radius: 5px;"><strong style="color: #1976d2;">📄 Page \1:</strong></div>', 
+                   result)
+    
+    # Améliorer l'affichage de la section références
+    result = re.sub(r'📚 \*\*RÉFÉRENCES COMPLÈTES:\*\*', 
+                   r'<div style="background: #e8f5e8; padding: 10px; border-radius: 5px; margin: 15px 0;"><strong style="color: #2e7d32;">📚 RÉFÉRENCES COMPLÈTES:</strong></div>', 
+                   result)
+    
+    # Regex pour [chiffre] et [SOURCE-chiffre]
+    citation_patterns = [
+        (r'\[(\d{1,2})\]', lambda m: f'<span style="background-color: #e3f2fd; color: #1976d2; padding: 2px 6px; border-radius: 8px; font-weight: bold; margin: 0 2px;">[{m.group(1)}]</span>'),
+        (r'\[SOURCE-(\d{1,2})\]', lambda m: f'<span style="background-color: #e3f2fd; color: #1976d2; padding: 2px 6px; border-radius: 8px; font-weight: bold; margin: 0 2px;">[SOURCE-{m.group(1)}]</span>')
+    ]
+    
+    for pattern, replacement in citation_patterns:
+        result = re.sub(pattern, replacement, result)
+    
+    return result
 
 
-def _display_numbered_sources(sources_data: Dict, query: str) -> None:
+def _display_simple_sources(results: List[Dict]) -> None:
+    """Affiche les sources de manière simple et claire avec passages complets."""
+    for i, result in enumerate(results, 1):
+        try:
+            # Extraction sécurisée des données
+            content = result.get("content", "").strip()
+            metadata = result.get("metadata", {})
+            page = metadata.get("page", "?")
+            source = metadata.get("source", f"Document {i}")
+            relevance = metadata.get("relevance_score", 0)
+            
+            # Échapper les caractères HTML dans le contenu
+            import html
+            safe_content = html.escape(content)
+            safe_source = html.escape(str(source))
+            
+            # Affichage amélioré avec meilleure mise en valeur des passages
+            source_html = f"""
+            <div style="background: #f8f9fa; border: 2px solid #1976d2; padding: 20px; margin: 15px 0; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                <div style="margin-bottom: 15px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <span style="background: #1976d2; color: white; padding: 8px 15px; border-radius: 20px; font-weight: bold; font-size: 1.1em;">SOURCE [{i}]</span>
+                    <strong style="color: #333; font-size: 1.1em;">📄 {safe_source}</strong>
+                    <span style="color: #666; font-size: 0.95em;">📖 Page {page}</span>
+                    <span style="color: #28a745; font-weight: bold; font-size: 0.9em;">🎯 Pertinence: {relevance:.0f}%</span>
+                </div>
+                <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e0e0e0; border-left: 4px solid #1976d2;">
+                    <div style="margin-bottom: 10px;">
+                        <strong style="color: #1976d2; font-size: 1.1em;">📖 PASSAGE CORRESPONDANT :</strong>
+                    </div>
+                    <div style="background: #f8f9ff; padding: 15px; border-radius: 5px; font-family: 'Georgia', serif; line-height: 1.6; font-size: 1.05em; color: #2c3e50; border-left: 3px solid #3498db;">
+                        <em>"{safe_content}"</em>
+                    </div>
+                </div>
+            </div>
+            """
+            
+            st.markdown(source_html, unsafe_allow_html=True)
+            
+            # Ajouter un bouton pour copier le passage
+            if st.button(f"📋 Copier le passage {i}", key=f"copy_passage_{i}"):
+                st.code(content, language="text")
+                st.success(f"✅ Passage {i} affiché ci-dessus - vous pouvez le copier !")
+            
+        except Exception as e:
+            st.error(f"❌ Erreur source [{i}]: {e}")
+
+
+def display_enhanced_rag_response(agent_response: str, sources_data: Dict, query: str = "") -> None:
     """
-    Affiche les sources numérotées de façon claire et concise.
+    Affichage RAG AMÉLIORÉ avec passages mis en évidence et meilleure organisation.
     """
-    search_results = sources_data.get("results", [])
+    print(f"🎨 RAG Display: Starting ENHANCED display...")
     
-    if not search_results:
-        st.info("📚 Aucune source trouvée pour cette recherche.")
+    # Validation simple
+    if not sources_data or not isinstance(sources_data, dict):
+        st.error("❌ Données sources invalides")
+        st.markdown(agent_response)
         return
     
-    # Grouper par fichier pour un affichage organisé
-    sources_by_file = {}
-    for i, result in enumerate(search_results, 1):
-        # Accéder correctement aux métadonnées
-        metadata = result.get("metadata", {})
-        filename = metadata.get("source", "Document inconnu")
-        
-        if filename not in sources_by_file:
-            sources_by_file[filename] = []
-        sources_by_file[filename].append((i, result))
+    results = sources_data.get("results", [])
+    if not results:
+        st.info("📚 Aucune source trouvée")
+        st.markdown(agent_response)
+        return
     
-    # Affichage compact et élégant
-    with st.expander(f"🔍 **{len(search_results)} source(s) trouvée(s)**", expanded=False):
-        for filename, file_sources in sources_by_file.items():
-            st.markdown(f"**📄 {filename.replace('.pdf', '')}**")
-            
-            # Affichage en colonnes pour un look plus compact
-            for citation_num, result in file_sources:
-                metadata = result.get("metadata", {})
-                page = metadata.get("page", "?")
-                content_preview = result.get("content", "")[:150]  # Plus court
-                relevance_score = metadata.get("relevance_score", 0)
-                
-                # Style carte compact
-                st.markdown(f"""
-                <div style="
-                    background-color: #f8f9fa; 
-                    border-left: 4px solid #1976d2; 
-                    padding: 10px; 
-                    margin: 8px 0; 
-                    border-radius: 4px;
-                ">
-                    <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                        <span style="
-                            background-color: #1976d2; 
-                            color: white; 
-                            padding: 2px 8px; 
-                            border-radius: 12px; 
-                            font-size: 0.8em; 
-                            font-weight: bold; 
-                            margin-right: 10px;
-                        ">[{citation_num}]</span>
-                        <span style="
-                            color: #666; 
-                            font-size: 0.9em;
-                            font-weight: bold;
-                        ">Page {page}</span>
-                        <span style="
-                            color: #888; 
-                            font-size: 0.8em; 
-                            margin-left: 10px;
-                        ">Pertinence: {relevance_score:.1f}%</span>
-                    </div>
-                    <div style="
-                        color: #333; 
-                        font-size: 0.9em; 
-                        font-style: italic; 
-                        line-height: 1.4;
-                    ">"{content_preview}..."</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            st.markdown("<br>", unsafe_allow_html=True)  # Espacement entre fichiers
+    print(f"✅ RAG Display: Displaying {len(results)} sources with enhanced format")
+    
+    # En-tête avec métadonnées
+    st.markdown("---")
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.markdown(f"**🔍 Requête analysée :** {query}")
+    with col2:
+        st.markdown(f"**📚 Sources trouvées :** {len(results)}")
+    with col3:
+        avg_relevance = sum(r.get("metadata", {}).get("relevance_score", 0) for r in results) / len(results)
+        st.markdown(f"**🎯 Pertinence moy. :** {avg_relevance:.0f}%")
+    
+    # 1. Réponse avec citations colorées
+    st.markdown("### 💬 Réponse de l'IA")
+    enhanced_response = _highlight_citations(agent_response)
+    st.markdown(enhanced_response, unsafe_allow_html=True)
+    
+    # 2. Affichage des sources avec passages
+    st.markdown("### 📚 Sources et Passages du Document")
+    
+    # Résumé compact des sources
+    _display_enhanced_citations_summary(results)
+    
+    # Sources détaillées avec passages
+    with st.expander(f"📖 **PASSAGES COMPLETS des {len(results)} sources** - Cliquez pour voir tous les détails", expanded=True):
+        _display_simple_sources(results)
+    
+    # Section de téléchargement
+    st.markdown("### 📥 Exporter les résultats")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📋 Copier toutes les citations", key="copy_all_citations"):
+            all_citations = _generate_detailed_citations_text(results, query, agent_response)
+            st.code(all_citations, language="text")
+            st.success("✅ Toutes les citations formatées sont affichées ci-dessus !")
+    
+    with col2:
+        if st.button("📊 Voir les statistiques des sources", key="show_stats"):
+            _display_sources_statistics(results)
+    
+    st.markdown("---")
+    print(f"✅ RAG Display: Enhanced display completed")
 
 
-def display_structured_rag_response(response: str, query: str = "") -> bool:
-    """
-    Détecte et affiche les réponses RAG structurées style NotebookLM.
+def _generate_detailed_citations_text(results: List[Dict], query: str, response: str) -> str:
+    """Génère un rapport détaillé avec citations, passages et métadonnées."""
+    if not results:
+        return "Aucune citation disponible."
     
-    Args:
-        response: Réponse de l'agent (JSON ou texte)
-        query: Requête originale
-        
-    Returns:
-        True si affiché comme résultat structuré, False sinon
-    """
+    detailed_text = f"""RAPPORT DE RECHERCHE DOCUMENTAIRE
+=====================================
+
+REQUÊTE : {query}
+DATE : {time.strftime('%Y-%m-%d %H:%M:%S')}
+NOMBRE DE SOURCES : {len(results)}
+
+RÉPONSE DE L'IA :
+{response}
+
+SOURCES ET PASSAGES DÉTAILLÉS :
+==============================
+
+"""
     
-    # Détecte les citations dans la réponse (style NotebookLM)
-    citations_pattern = r'\[\d+\]'
-    has_citations = bool(re.search(citations_pattern, response))
-    
-    # Essaye d'extraire le JSON (différents formats possibles)
-    json_data = None
-    
-    # Format 1: Bloc JSON markdown
-    json_match = re.search(r'```json\s*\n(.*?)\n```', response, re.DOTALL)
-    if json_match:
+    for i, result in enumerate(results, 1):
         try:
-            json_data = json.loads(json_match.group(1))
-        except json.JSONDecodeError:
-            pass
-    
-    # Format 2: JSON brut à la fin
-    if not json_data:
-        lines = response.strip().split('\n')
-        for i in range(len(lines)-1, -1, -1):
-            line = lines[i].strip()
-            if line.startswith('{') and line.endswith('}'):
-                try:
-                    json_data = json.loads('\n'.join(lines[i:]))
-                    break
-                except json.JSONDecodeError:
-                    continue
-    
-    # Validation : vérifier que c'est bien du RAG structuré
-    is_valid_rag = (
-        json_data and 
-        isinstance(json_data, dict) and
-        json_data.get("success") and
-        json_data.get("results") and
-        len(json_data.get("results", [])) > 0
-    )
-    
-    if has_citations and is_valid_rag:
-        # Séparer la réponse du JSON pour l'affichage
-        if json_match:
-            clean_response = response[:json_match.start()].strip()
-        else:
-            # Pour le JSON brut, couper avant la ligne JSON
-            lines = response.strip().split('\n')
-            for i, line in enumerate(lines):
-                if line.strip().startswith('{'):
-                    clean_response = '\n'.join(lines[:i]).strip()
-                    break
-            else:
-                clean_response = response
-        
-        # Afficher via display_notebooklm_response
-        display_notebooklm_response(clean_response, json_data, query)
-        return True
-    
-    return False
+            content = result.get("content", "").strip()
+            metadata = result.get("metadata", {})
+            page = metadata.get("page", "?")
+            source = metadata.get("source", f"Document {i}")
+            relevance = metadata.get("relevance_score", 0)
+            
+            detailed_text += f"""
+SOURCE [{i}] - {source}
+{'='*50}
+📄 Document : {source}
+📖 Page : {page}
+🎯 Pertinence : {relevance:.1f}%
 
- 
+📖 PASSAGE :
+"{content}"
+
+{'='*50}
+
+"""
+            
+        except Exception as e:
+            detailed_text += f"\nERREUR SOURCE [{i}]: {e}\n"
+    
+    return detailed_text
+
+
+def _display_enhanced_citations_summary(results: List[Dict]) -> None:
+    """Affiche un résumé amélioré des citations avec plus de détails."""
+    if not results:
+        return
+    
+    st.markdown("#### 🔗 Résumé des Citations")
+    
+    # Créer un résumé plus détaillé
+    citations_html = '<div style="background: linear-gradient(135deg, #f0f8ff 0%, #e3f2fd 100%); padding: 20px; border-radius: 12px; margin: 15px 0; border: 1px solid #1976d2;">'
+    citations_html += '<div style="margin-bottom: 15px;"><strong style="color: #1976d2; font-size: 1.2em;">📋 Références trouvées dans les documents :</strong></div>'
+    
+    for i, result in enumerate(results, 1):
+        try:
+            import html
+            metadata = result.get("metadata", {})
+            page = metadata.get("page", "?")
+            source = metadata.get("source", f"Document {i}")
+            relevance = metadata.get("relevance_score", 0)
+            content_preview = result.get("content", "")[:150] + "..." if len(result.get("content", "")) > 150 else result.get("content", "")
+            
+            # Échapper les caractères HTML
+            safe_source = html.escape(str(source))
+            safe_content_preview = html.escape(str(content_preview))
+            
+            # Couleur basée sur la pertinence
+            if relevance >= 90:
+                color = "#2e7d32"  # Vert foncé
+            elif relevance >= 75:
+                color = "#1976d2"  # Bleu
+            elif relevance >= 60:
+                color = "#f57c00"  # Orange
+            else:
+                color = "#d32f2f"  # Rouge
+            
+            citations_html += f'''
+            <div style="margin: 12px 0; padding: 15px; background: white; border-radius: 8px; border-left: 5px solid {color}; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px;">
+                    <span style="background: {color}; color: white; padding: 4px 10px; border-radius: 15px; font-weight: bold; font-size: 0.9em;">SOURCE [{i}]</span>
+                    <strong style="color: #333;">{safe_source}</strong>
+                    <span style="color: #666; font-size: 0.9em;">📖 Page {page}</span>
+                    <span style="color: {color}; font-weight: bold; font-size: 0.9em;">🎯 {relevance:.0f}%</span>
+                </div>
+                <div style="font-size: 0.9em; color: #555; font-style: italic; line-height: 1.4;">
+                    <strong>Extrait :</strong> "{safe_content_preview}"
+                </div>
+            </div>
+            '''
+        except Exception as e:
+            citations_html += f'<div style="color: red; padding: 10px;">Erreur citation [{i}]: {html.escape(str(e))}</div>'
+    
+    citations_html += '</div>'
+    st.markdown(citations_html, unsafe_allow_html=True)
+
+
+def _display_sources_statistics(results: List[Dict]) -> None:
+    """Affiche des statistiques détaillées sur les sources trouvées."""
+    if not results:
+        st.warning("Aucune source disponible pour les statistiques.")
+        return
+    
+    st.markdown("#### 📊 Statistiques des Sources")
+    
+    # Calculs statistiques
+    relevance_scores = [r.get("metadata", {}).get("relevance_score", 0) for r in results]
+    content_lengths = [len(r.get("content", "")) for r in results]
+    
+    # Affichage en colonnes
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("📚 Nombre de sources", len(results))
+        st.metric("🎯 Pertinence moyenne", f"{sum(relevance_scores)/len(relevance_scores):.1f}%")
+    
+    with col2:
+        st.metric("🔝 Pertinence maximale", f"{max(relevance_scores):.1f}%")
+        st.metric("📝 Longueur moyenne", f"{sum(content_lengths)//len(content_lengths)} caractères")
+    
+    with col3:
+        st.metric("📄 Pages couvertes", len(set(r.get("metadata", {}).get("page", "?") for r in results)))
+        st.metric("📈 Sources > 80%", len([s for s in relevance_scores if s >= 80]))
+    
+    # Graphique de répartition des scores de pertinence
+    if len(relevance_scores) > 1:
+        import plotly.express as px
+        import pandas as pd
+        
+        df = pd.DataFrame({
+            'Source': [f"Source {i+1}" for i in range(len(relevance_scores))],
+            'Pertinence': relevance_scores,
+            'Longueur': content_lengths
+        })
+        
+        fig = px.bar(df, x='Source', y='Pertinence', 
+                     title="Scores de Pertinence par Source",
+                     color='Pertinence',
+                     color_continuous_scale='Viridis')
+        fig.update_layout(height=300)
+        st.plotly_chart(fig, use_container_width=True) 

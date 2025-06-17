@@ -31,10 +31,20 @@ EXPORT_BASE_DIR = "data/output"
 for d in [IMAGE_DIR, TABLE_DIR, EXPORT_BASE_DIR]:
     os.makedirs(d, exist_ok=True)
 
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
+# -------- CONFIGURATION CHUNKING AMÉLIORÉE --------
+# Basé sur les meilleures pratiques RAG 2024
+CHUNK_SIZE = 1500  # Taille augmentée pour plus de contexte (≈300-400 mots)
+CHUNK_OVERLAP = 225  # 15% d'overlap optimal (CHUNK_SIZE * 0.15)
 
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+# Nouveaux paramètres pour chunking intelligent
+MIN_CHUNK_SIZE = 300  # Éviter les chunks trop petits
+MAX_CHUNK_SIZE = 2000  # Limite supérieure stricte
+
+# 🆕 MODÈLE D'EMBEDDING UNIFIÉ - Cohérent avec agent_config.py
+from agents.config.agent_config import EMBEDDING_MODEL_NAME
+EMBEDDING_MODEL = EMBEDDING_MODEL_NAME  # Utilise le modèle centralisé
+
+print(f"📊 PDF Processor: Using embedding model: {EMBEDDING_MODEL}")
 
 # -------- FONCTION PRINCIPALE --------
 
@@ -312,6 +322,7 @@ def decouper_texte(texte):
 def decouper_texte_avec_pages(resultat_ocr):
     """
     Découpe le texte en chunks en gardant l'information de la page d'origine.
+    VERSION AMÉLIORÉE avec chunking sémantique intelligent.
     
     Args:
         resultat_ocr: Résultat de l'OCR avec les pages
@@ -319,12 +330,26 @@ def decouper_texte_avec_pages(resultat_ocr):
     Returns:
         List[dict]: Liste de dictionnaires avec 'content' et 'page_info'
     """
-    print(f"Découpage du texte avec tracking des pages (taille={CHUNK_SIZE}, chevauchement={CHUNK_OVERLAP})...")
+    print(f"🧠 Découpage intelligent du texte (taille={CHUNK_SIZE}, chevauchement={CHUNK_OVERLAP})...")
     
+    # Stratégie de séparation améliorée pour préserver la structure
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", " ", ""]
+        separators=[
+            "\n\n\n",  # Sections importantes
+            "\n\n",    # Paragraphes
+            "\n",      # Lignes
+            ". ",      # Phrases
+            "! ",      # Exclamations
+            "? ",      # Questions
+            "; ",      # Points-virgules
+            ", ",      # Virgules
+            " ",       # Espaces
+            ""         # Caractères
+        ],
+        length_function=len,
+        is_separator_regex=False,
     )
     
     chunks_avec_pages = []
@@ -333,29 +358,81 @@ def decouper_texte_avec_pages(resultat_ocr):
         if not page.markdown:
             continue
             
-        # Nettoyer le texte de la page
-        page_text = page.markdown
-        page_text = re.sub(r'!\[.*?\]\(.*?\)', '', page_text)  # Supprimer les références d'images
-        page_text = re.sub(r'\n{3,}', '\n\n', page_text)  # Normaliser les sauts de ligne
-        page_text = page_text.strip()
+        # ✨ Nettoyage intelligent du texte
+        page_text = _preprocess_text_for_rag(page.markdown)
         
-        if not page_text:
+        if not page_text or len(page_text.strip()) < MIN_CHUNK_SIZE:
             continue
             
         # Découper le texte de cette page en chunks
         page_chunks = splitter.split_text(page_text)
         
-        # Ajouter les chunks avec l'info de page
+        # ✨ Filtrage et enrichissement des chunks
         for chunk_idx, chunk in enumerate(page_chunks):
+            # Éviter les chunks trop petits ou vides
+            if len(chunk.strip()) < MIN_CHUNK_SIZE:
+                continue
+                
+            # Limiter la taille maximale
+            if len(chunk) > MAX_CHUNK_SIZE:
+                chunk = chunk[:MAX_CHUNK_SIZE] + "..."
+            
+            # Ajouter un contexte de page si nécessaire
+            enriched_chunk = _add_page_context(chunk, page_idx, page_text)
+            
             chunks_avec_pages.append({
-                'content': chunk,
+                'content': enriched_chunk,
                 'page_number': page_idx,
                 'chunk_in_page': chunk_idx,
-                'total_chunks_in_page': len(page_chunks)
+                'total_chunks_in_page': len(page_chunks),
+                'chunk_length': len(enriched_chunk),
+                'original_length': len(chunk)
             })
     
-    print(f"  Texte découpé en {len(chunks_avec_pages)} chunks avec information de page")
+    print(f"✅ Texte découpé en {len(chunks_avec_pages)} chunks intelligents avec information de page")
     return chunks_avec_pages
+
+
+def _preprocess_text_for_rag(text: str) -> str:
+    """
+    Préprocessing intelligent du texte pour améliorer la qualité RAG.
+    """
+    # Supprimer les références d'images mais garder les légendes utiles
+    text = re.sub(r'!\[([^\]]*)\]\([^)]*\)', r'Image: \1', text)
+    
+    # Normaliser les sauts de ligne multiples
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Supprimer les espaces multiples
+    text = re.sub(r' {2,}', ' ', text)
+    
+    # Nettoyer les caractères de contrôle
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x84\x86-\x9f]', '', text)
+    
+    # Préserver la structure des listes et énumérations
+    text = re.sub(r'(\d+\.)\s+', r'\1 ', text)  # Normaliser les listes numérotées
+    text = re.sub(r'([•\-\*])\s+', r'\1 ', text)  # Normaliser les puces
+    
+    return text.strip()
+
+
+def _add_page_context(chunk: str, page_number: int, full_page_text: str) -> str:
+    """
+    Ajoute un contexte de page minimal pour améliorer la recherche.
+    """
+    # Ajouter le numéro de page de manière discrète
+    context_prefix = f"[Page {page_number}] "
+    
+    # Si le chunk est court, ajouter un peu plus de contexte
+    if len(chunk) < CHUNK_SIZE * 0.7:  # Si le chunk fait moins de 70% de la taille cible
+        # Essayer de trouver un titre ou en-tête dans la page
+        lines = full_page_text.split('\n')
+        for line in lines[:5]:  # Regarder les 5 premières lignes
+            if line.strip() and (line.isupper() or line.startswith('#')):
+                context_prefix += f"{line.strip()}: "
+                break
+    
+    return context_prefix + chunk
 
 
 # -------- EMBEDDINGS --------

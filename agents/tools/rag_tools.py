@@ -1,9 +1,6 @@
 """
-RAG Tools for Document Retrieval Agents - Enhanced with Debug
-Contains only the unified PDF search tool following smolagents best practices with comprehensive debugging.
-
-Note: This module uses print() statements for RAG debugging while HTTP/API logs are suppressed.
-The print() statements with "🔍 RAG Debug:" prefixes show the RAG pipeline execution flow.
+RAG Tools for Document Retrieval Agents - Version Simple avec Affichage Direct
+Affiche automatiquement les sources trouvées lors de la recherche vectorielle.
 """
 
 import os
@@ -25,513 +22,276 @@ logging.getLogger("httpcore.http11").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
+# Cache temporaire global pour les sources RAG
+_temp_rag_sources_cache = []
 
-def _search_pdfs_internal(user_query: str) -> str:
+@tool
+def rag_search_simple(query: str) -> str:
     """
-    Internal function to search PDFs and return structured results.
-    Enhanced with comprehensive debug logging following smolagents best practices.
+    Search PDF documents and return answer with citations.
+    AFFICHE AUTOMATIQUEMENT les sources trouvées avec scores de pertinence.
+    
+    Args:
+        query: Search terms for PDF documents.
+    
+    Returns:
+        Answer with citations [SOURCE-1], [SOURCE-2], etc.
     """
-    print(f"🔍 RAG Debug: Starting PDF search for query: '{user_query}'")
     
-    if not user_query or not isinstance(user_query, str):
-        error_msg = "Please provide a valid search query"
-        print(f"❌ RAG Debug: Validation error - {error_msg}")
-        return json.dumps({
-            "success": False,
-            "error": error_msg,
-            "error_type": "validation_error",
-            "debug_info": {
-                "query_type": type(user_query).__name__,
-                "query_length": len(user_query) if user_query else 0
-            }
-        })
+    print(f"📚 RAG SEARCH: Starting search for: '{query}'")
     
-    print(f"✅ RAG Debug: Query validation passed - length: {len(user_query)} chars")
+    if not query or not isinstance(query, str):
+        return "❌ Query must be a non-empty string"
     
-    # Try to get context from session state
     try:
-        import json as json_module
-        
+        # Try to import session state (will fail outside Streamlit)
+        try:
+            import streamlit as st
+            in_streamlit = True
+        except:
+            in_streamlit = False
+            
+        # Load session data
         session_file = "data/session_persistence/persistent_session_state.json"
-        print(f"🔍 RAG Debug: Checking session file: {session_file}")
+        print(f"📚 RAG SEARCH: Checking session file: {session_file}")
         
-        if os.path.exists(session_file):
-            print(f"✅ RAG Debug: Session file found, loading...")
-            with open(session_file, 'r', encoding='utf-8') as f:
-                processed_files = json_module.load(f)
-            
-            print(f"📊 RAG Debug: Loaded {len(processed_files)} files from session")
-            
-            # Build PDF context
-            available_pdfs_context = []
-            for fid, details in processed_files.items():
-                if details.get('type') == 'pdf' and details.get('indexed') and details.get('db_path'):
-                    available_pdfs_context.append({
-                        'file_id': fid,
-                        'filename': details.get('filename', 'Unknown PDF'),
-                        'classification': details.get('classification'),
-                        'db_path': details.get('db_path'),
-                        'user_notes': details.get('user_notes', ''),
-                        'summary': details.get('summary', '')
-                    })
-                    print(f"📄 RAG Debug: Found indexed PDF - {details.get('filename')} at {details.get('db_path')}")
-            
-            print(f"📊 RAG Debug: Total indexed PDFs found: {len(available_pdfs_context)}")
-            
-            if available_pdfs_context:
-                # Use first available PDF for search
-                first_pdf = available_pdfs_context[0]
-                db_path = first_pdf.get('db_path')
-                filename = first_pdf.get('filename', '')
-                
-                print(f"🎯 RAG Debug: Using PDF '{filename}' for search")
-                print(f"🗂️ RAG Debug: Database path: {db_path}")
-                
-                if db_path and os.path.exists(db_path):
-                    print(f"✅ RAG Debug: Database path exists, proceeding with vector search")
-                    return _perform_vector_search(user_query, db_path, filename)
-                else:
-                    print(f"❌ RAG Debug: Database path does not exist: {db_path}")
-            else:
-                print(f"⚠️ RAG Debug: No indexed PDFs found in session")
-        else:
-            print(f"⚠️ RAG Debug: Session file does not exist: {session_file}")
+        if not os.path.exists(session_file):
+            print("❌ RAG SEARCH: No session file found")
+            return "❌ Aucun document PDF n'est disponible pour la recherche. Veuillez d'abord télécharger des documents PDF."
         
-    except Exception as e:
-        print(f"❌ RAG Debug: Error loading session context: {str(e)}")
-        print(f"🔧 RAG Debug: Exception type: {type(e).__name__}")
-        logger.exception("Session context loading failed")
-    
-    # No context found - return guidance
-    print(f"📖 RAG Debug: No context found, returning guidance message")
-    return json.dumps({
-        "success": False,
-        "error": "Aucun document PDF disponible actuellement",
-        "error_type": "no_context",
-        "guidance": {
-            "message": "Pour utiliser la recherche dans les documents PDF, vous devez :",
-            "steps": [
-                "1. Télécharger des fichiers PDF via l'interface",
-                "2. Classifier les documents dans la barre latérale",
-                "3. Indexer les PDFs pour la recherche",
-                "4. Puis poser vos questions sur le contenu"
-            ],
-            "alternative": f"Je peux rechercher des informations sur '{user_query}' en ligne si vous le souhaitez."
-        },
-        "query": user_query,
-        "debug_info": {
-            "session_file_checked": session_file,
-            "session_file_exists": os.path.exists(session_file) if 'session_file' in locals() else False
-        }
-    }, ensure_ascii=False, indent=2)
-
-
-def _perform_vector_search(query: str, db_path: str, filename: str) -> str:
-    """
-    Perform the actual vector search in the PDF database.
-    Enhanced with detailed debug logging and error handling.
-    """
-    print(f"🔍 RAG Debug: Starting vector search")
-    print(f"🔍 RAG Debug: Query: '{query}'")
-    print(f"🔍 RAG Debug: DB Path: '{db_path}'")
-    print(f"🔍 RAG Debug: Filename: '{filename}'")
-    
-    try:
-        print(f"📚 RAG Debug: Importing vector store dependencies...")
+        print(f"📚 RAG SEARCH: Loading session data...")
+        with open(session_file, 'r', encoding='utf-8') as f:
+            processed_files = json.load(f)
+        
+        print(f"📚 RAG SEARCH: Loaded {len(processed_files)} files from session")
+        
+        # Find indexed PDFs
+        available_pdfs = []
+        for fid, details in processed_files.items():
+            if details.get('type') == 'pdf' and details.get('indexed') and details.get('db_path'):
+                available_pdfs.append({
+                    'file_id': fid,
+                    'filename': details.get('filename', 'Unknown PDF'),
+                    'db_path': details.get('db_path'),
+                })
+                print(f"📄 RAG SEARCH: Found indexed PDF - {details.get('filename')} at {details.get('db_path')}")
+        
+        if not available_pdfs:
+            print("❌ RAG SEARCH: No indexed PDFs found")
+            return "❌ Aucun document PDF indexé n'est disponible pour la recherche. Veuillez d'abord indexer des documents PDF."
+        
+        # Use first available PDF
+        first_pdf = available_pdfs[0]
+        db_path = first_pdf['db_path']
+        filename = first_pdf['filename']
+        
+        print(f"📚 RAG SEARCH: Using PDF '{filename}' with database: {db_path}")
+        
+        if not os.path.exists(db_path):
+            print(f"❌ RAG SEARCH: Database path does not exist: {db_path}")
+            return f"❌ Base de données vectorielle introuvable: {db_path}"
+        
+        # Initialize vector store
         from langchain_community.vectorstores import Chroma
         from ..core.embedding import get_embedding_function
-        print(f"✅ RAG Debug: Dependencies imported successfully")
         
-        print(f"🔧 RAG Debug: Getting embedding function...")
+        print(f"📚 RAG SEARCH: Initializing vector store...")
         embedding_function = get_embedding_function()
-        print(f"✅ RAG Debug: Embedding function obtained: {type(embedding_function).__name__}")
-        
-        # Initialize the Chroma vector store
-        print(f"🗂️ RAG Debug: Initializing Chroma vector store...")
-        print(f"🗂️ RAG Debug: Collection name: {RAG_CONFIG['collection_name']}")
         vector_store = Chroma(
             persist_directory=db_path,
             embedding_function=embedding_function,
             collection_name=RAG_CONFIG["collection_name"]
         )
-        print(f"✅ RAG Debug: Vector store initialized successfully")
         
-        # Perform similarity search
-        search_k = RAG_CONFIG["similarity_search_k"]
-        print(f"🎯 RAG Debug: Performing similarity search with k={search_k}")
+        # Check if we have documents
+        try:
+            doc_count = vector_store._collection.count()
+            if doc_count == 0:
+                print("❌ RAG SEARCH: No documents found in vector store")
+                return "❌ Aucun document trouvé dans la base vectorielle."
+        except:
+            print("❌ RAG SEARCH: Could not access vector store collection")
+            return "❌ Erreur d'accès à la base de données vectorielle."
         
-        results = vector_store.similarity_search_with_score(query, k=search_k)
-        print(f"📊 RAG Debug: Search completed - found {len(results)} results")
+        print(f"📚 RAG SEARCH: Found {doc_count} documents in vector store")
+        
+        # Perform search
+        results = vector_store.similarity_search_with_score(query, k=5)
+        print(f"📚 RAG SEARCH: Found {len(results)} relevant passages")
         
         if not results:
-            print(f"⚠️ RAG Debug: No results found for query")
-            return json.dumps({
-                "success": True,
-                "results": [],
-                "query": query,
-                "context": {"filename": filename},
-                "message": "Aucun document pertinent trouvé pour cette requête",
-                "debug_info": {
-                    "search_k": search_k,
-                    "db_path": db_path,
-                    "collection_name": RAG_CONFIG["collection_name"]
-                }
-            })
-
-        # Structure results
-        print(f"🔧 RAG Debug: Processing {len(results)} search results...")
-        structured_results = []
-        total_content_length = 0
+            print("❌ RAG SEARCH: No relevant passages found")
+            return f"❌ Aucun passage pertinent trouvé pour la requête: '{query}'"
+        
+        # AFFICHAGE DIRECT DÉSACTIVÉ - Les sources seront affichées après la réponse
+        print("🎨 RAG SEARCH: Sources seront affichées via le système de cache après la réponse")
+        
+        # Format results for response
+        response_parts = []
+        sources_data = []
         
         for i, (doc, score) in enumerate(results, 1):
-            metadata = doc.metadata or {}
             content = doc.page_content.strip()
-            content_length = len(content)
-            total_content_length += content_length
+            metadata = doc.metadata or {}
+            page = metadata.get('page', '?')
+            source = metadata.get('source') or metadata.get('filename', filename)
             
-            # Calculate relevance percentage
-            relevance_percent = (1 - score) * 100 if score <= 1 else 0
+            # LOGGING: Print detailed info for the LLM agent
+            print(f"📄 SOURCE {i}: {source}, page {page} (score: {score:.3f})")
+            print(f"📝 CONTENT {i}: {content[:200]}...")
             
-            # FIX: Le problème principal - utiliser la bonne clé pour les métadonnées
-            source_name = metadata.get('source') or metadata.get('filename') or filename
-            page_number = metadata.get('page', 'Page inconnue')
+            # Add to response with citation
+            response_parts.append(f"• {content} [SOURCE-{i}]")
             
-            print(f"📄 RAG Debug: Result {i} - Score: {score:.4f}, Relevance: {relevance_percent:.1f}%, Length: {content_length}")
-            print(f"📄 RAG Debug: Source: {source_name}, Page: {page_number}")
-            
-            result_item = {
-                "rank": i,
+            # Store for potential future use
+            sources_data.append({
                 "content": content,
                 "metadata": {
-                    "source": source_name,  # Utilise le source_name corrigé
-                    "page": page_number,
-                    "relevance_score": round(relevance_percent, 1),
-                    "content_length": content_length,
-                    "raw_score": score  # Add raw score for debugging
+                    "source": source,
+                    "page": page,
+                    "relevance_score": float(1 - score),  # Convert distance to relevance
+                    "citation_index": i
                 }
-            }
-            structured_results.append(result_item)
+            })
         
-        # Calculate average relevance
-        avg_relevance = sum(r["metadata"]["relevance_score"] for r in structured_results) / len(structured_results)
+        # Build final response with clear page references
+        response = f"RÉPONSE DOCUMENTÉE basée sur {len(sources_data)} sources dans le document '{filename}':\n\n"
         
-        print(f"📊 RAG Debug: Search summary:")
-        print(f"📊 RAG Debug: - Total content length: {total_content_length}")
-        print(f"📊 RAG Debug: - Average relevance: {avg_relevance:.1f}%")
-        print(f"📊 RAG Debug: - Top relevance: {structured_results[0]['metadata']['relevance_score']:.1f}%")
+        # Format each passage with clear page references
+        formatted_parts = []
+        for i, (doc, score) in enumerate(results, 1):
+            content = doc.page_content.strip()
+            metadata = doc.metadata or {}
+            page = metadata.get('page', '?')
+            
+            # Format with clear page indication
+            formatted_parts.append(f"📄 **Page {page}**: {content} [SOURCE-{i}]")
         
-        return json.dumps({
-            "success": True,
-            "results": structured_results,
-            "query": query,
-            "context": {"filename": filename},
-            "summary": {
-                "total_content_length": total_content_length,
-                "average_relevance": round(avg_relevance, 1),
-                "top_relevance": structured_results[0]["metadata"]["relevance_score"] if structured_results else 0
-            },
-            "debug_info": {
-                "search_k": search_k,
-                "db_path": db_path,
-                "collection_name": RAG_CONFIG["collection_name"],
-                "results_count": len(structured_results),
-                "embedding_function": type(embedding_function).__name__
-            }
-        }, ensure_ascii=False, indent=2)
-
-    except ImportError as e:
-        error_msg = f"Missing dependencies: {str(e)}"
-        print(f"❌ RAG Debug: Import error - {error_msg}")
-        print(f"💡 RAG Debug: Required packages: langchain-community, chromadb")
-        return json.dumps({
-            "success": False,
-            "error": error_msg,
-            "error_type": "import_error",
-            "debug_info": {
-                "missing_dependencies": ["langchain-community", "chromadb"],
-                "suggestion": "Install with: pip install langchain-community chromadb"
-            }
-        })
+        response += "\n\n".join(formatted_parts)
+        response += f"\n\n📚 **RÉFÉRENCES COMPLÈTES:**\n"
+        for i, source_data in enumerate(sources_data, 1):
+            metadata = source_data["metadata"]
+            response += f"[SOURCE-{i}] {metadata['source']}, page {metadata['page']} (pertinence: {metadata['relevance_score']:.0%})\n"
+        
+        print(f"✅ RAG SEARCH: Successfully generated response with {len(sources_data)} citations")
+        print(f"✅ RAG SEARCH: Sources displayed directly in UI")
+        
+        # Sauvegarder les sources pour affichage automatique
+        _save_rag_sources_to_temp_cache(results, query, filename)
+        
+        return response
+        
     except Exception as e:
-        error_msg = f"Search failed: {str(e)}"
-        print(f"❌ RAG Debug: Search error - {error_msg}")
-        print(f"🔧 RAG Debug: Exception type: {type(e).__name__}")
-        logger.exception("Vector search failed")
-        return json.dumps({
-            "success": False,
-            "error": error_msg,
-            "error_type": "search_error",
-            "debug_info": {
-                "query": query,
-                "db_path": db_path,
-                "filename": filename,
-                "exception_type": type(e).__name__
-            }
-        })
-
-
-def _generate_notebooklm_response(results: dict, user_query: str) -> str:
-    """
-    Génère une réponse style NotebookLM avec citations numérotées intégrées.
-    """
-    search_results = results.get("results", [])
-    context = results.get("context", {})
-    
-    if not search_results:
-        return "Aucune information pertinente trouvée dans les documents."
-    
-    # Informations du document
-    doc_name = context.get("filename", "").replace('.pdf', '')
-    total_results = len(search_results)
-    
-    # Construction de la réponse avec citations
-    response_parts = []
-    
-    # Introduction
-    if doc_name:
-        response_parts.append(f"Selon le document **{doc_name}**, voici les informations pertinentes concernant votre recherche :")
-        response_parts.append("")
-    
-    # Synthèse des informations avec citations
-    for i, result in enumerate(search_results[:3], 1):  # Limite à 3 sources principales
-        content = result.get("content", "")
-        metadata = result.get("metadata", {})
-        page = metadata.get("page", "?")
-        
-        # Extrait les points clés du contenu
-        key_points = _extract_key_information(content, user_query)
-        
-        if key_points:
-            # Intègre la citation numérotée
-            response_parts.append(f"{key_points} [{i}]")
-            response_parts.append("")
-    
-    # Conclusion si plusieurs sources
-    if total_results > 1:
-        response_parts.append(f"Ces informations proviennent de {total_results} passages pertinents du document.")
-        if total_results > 3:
-            response_parts.append(f"Les sources détaillées ci-dessous incluent {total_results-3} passages supplémentaires.")
-    
-    return "\n".join(response_parts)
-
-
-def _extract_key_information(content: str, query: str) -> str:
-    """
-    Extrait l'information clé du contenu en relation avec la requête.
-    """
-    if not content:
-        return ""
-    
-    # Nettoie le contenu
-    cleaned_content = content.strip()
-    
-    # Pour une réponse naturelle, on prend la phrase la plus pertinente
-    sentences = []
-    for sep in ['. ', '! ', '? ']:
-        if sep in cleaned_content:
-            sentences = cleaned_content.split(sep)
-            break
-    
-    if not sentences:
-        # Si pas de phrases distinctes, prend le début
-        return cleaned_content[:200] + "..." if len(cleaned_content) > 200 else cleaned_content
-    
-    # Sélectionne les phrases les plus pertinentes (simple heuristique)
-    query_words = set(query.lower().split())
-    best_sentences = []
-    
-    for sentence in sentences[:3]:  # Limite aux 3 premières phrases
-        sentence = sentence.strip()
-        if len(sentence) > 20:  # Ignore les phrases trop courtes
-            # Score simple basé sur les mots de la requête
-            sentence_words = set(sentence.lower().split())
-            relevance = len(query_words.intersection(sentence_words))
-            
-            if relevance > 0 or not best_sentences:  # Prend au moins une phrase
-                best_sentences.append((sentence, relevance))
-    
-    # Trie par pertinence et prend les meilleures
-    best_sentences.sort(key=lambda x: x[1], reverse=True)
-    
-    # Construit la réponse
-    if best_sentences:
-        # Prend les 2 meilleures phrases
-        selected = [s[0] for s in best_sentences[:2]]
-        result = '. '.join(selected)
-        
-        # Assure qu'on termine par un point
-        if not result.endswith(('.', '!', '?')):
-            result += '.'
-            
-        return result
-    
-    # Fallback
-    return cleaned_content[:200] + "..." if len(cleaned_content) > 200 else cleaned_content
-
-
-@tool
-def unified_pdf_search_and_analyze(query: str) -> str:
-    """
-    Search PDF documents and provide analysis with citations in one step.
-    
-    Combines PDF search + analysis following smolagents best practice: "group tools 
-    to reduce LLM calls". Handles all document retrieval scenarios automatically.
-    
-    Args:
-        query: Search terms for PDF documents. Use specific keywords for better results.
-               Examples: "financial controls", "risk management procedures", "methodology"
-               Avoid questions - use keywords instead: "internal controls" not "what are internal controls?"
-    
-    Returns:
-        Natural analysis with citations [1], [2] and source references. If no documents
-        are available, returns guidance on how to upload and index PDFs first.
-        
-    Error Handling:
-        - "No PDFs available": Upload PDFs via interface, classify and index them first
-        - "No results found": Try broader or different search terms
-        - "Search failed": Check PDF indexing status or contact support
-        
-    Usage Examples:
-        - unified_pdf_search_and_analyze("financial risk assessment")
-        - unified_pdf_search_and_analyze("machine learning methodology")
-        - unified_pdf_search_and_analyze("regulatory compliance")
-    """
-    
-    print(f"🚀 RAG Tool: Starting unified PDF search and analysis")
-    print(f"🔍 RAG Tool: Query received: '{query}'")
-    
-    if not query or not isinstance(query, str):
-        error_msg = "❌ RAG Tool: Query must be a non-empty string"
-        print(error_msg)
-        return error_msg
-    
-    print(f"✅ RAG Tool: Query validation passed")
-    
-    try:
-        print(f"🔍 RAG Tool: Unified PDF search and analysis for: '{query}'")
-        print(f"📊 RAG Tool: Calling internal search function...")
-        
-        # Call the internal search function
-        search_results = _search_pdfs_internal(query)
-        
-        print(f"📊 RAG Tool: Internal search completed")
-        print(f"🔧 RAG Tool: Parsing search results...")
-        
-        # Parse search results
-        try:
-            results_data = json.loads(search_results)
-            print(f"✅ RAG Tool: Results parsed successfully")
-        except json.JSONDecodeError as e:
-            error_msg = f"❌ RAG Tool: Failed to parse search results: {e}"
-            print(error_msg)
-            return error_msg
-        
-        # Check if search was successful
-        if not results_data.get("success", False):
-            error_msg = f"❌ RAG Tool: Search failed: {results_data.get('error', 'Unknown error')}"
-            print(error_msg)
-            return error_msg
-        
-        print(f"✅ RAG Tool: Search successful, generating NotebookLM response...")
-        
-        # Get search results and query for response generation
-        search_results_list = results_data.get("results", [])
-        print(f"📊 RAG Tool: Found {len(search_results_list)} results")
-        
-        if not search_results_list:
-            no_results_msg = f"ℹ️ Aucun document trouvé pour la requête '{query}'. Essayez avec des termes différents."
-            print(f"📊 RAG Tool: {no_results_msg}")
-            return no_results_msg
-        
-        print(f"🎨 RAG Tool: Generating NotebookLM-style response...")
-        
-        # Generate the comprehensive response
-        notebooklm_response = _generate_notebooklm_response(results_data, query)
-        
-        print(f"✅ RAG Tool: NotebookLM response generated")
-        print(f"🔍 RAG Tool: NotebookLM response preview: {notebooklm_response[:200]}...")
-        
-        # Combine with JSON metadata for complete response
-        print(f"🔗 RAG Tool: Combining response with JSON metadata...")
-        
-        # Create the combined response with sources
-        combined_response = f"{notebooklm_response}\n\n```json\n{search_results}\n```"
-        
-        print(f"✅ RAG Tool: Tool execution completed successfully")
-        print(f"📊 RAG Tool: Final response length: {len(combined_response)} characters")
-        
-        # 🆕 NOUVELLE APPROCHE: Cache des sources hors-LLM
-        # Vérifier si la réponse contient des citations (format NotebookLM)
-        has_citations = bool(re.search(r'\[\d+\]', notebooklm_response))
-        has_sources = len(search_results_list) > 0
-        
-        print(f"🔍 RAG Tool: Citation check - Has citations: {has_citations}")
-        print(f"🔍 RAG Tool: Sources check - Has sources: {has_sources}")
-        
-        if has_citations and has_sources:
-            print(f"🎯 RAG Tool: Detected structured response with citations and sources")
-            
-            # Sauvegarder les sources dans la session Streamlit
-            _store_sources_in_session(results_data, query)
-            
-            print(f"📦 RAG Tool: Sources stored in session, returning clean response")
-            # Retourner seulement la réponse naturelle sans cache ID
-            return notebooklm_response
-        else:
-            print(f"ℹ️ RAG Tool: Response doesn't have citations/sources, returning normally")
-            return combined_response
-            
-    except Exception as e:
-        error_msg = f"❌ RAG Tool: Unexpected error during execution: {str(e)}"
-        print(error_msg)
-        import traceback
-        print(f"📍 RAG Tool: Traceback: {traceback.format_exc()}")
+        error_msg = f"❌ Erreur lors de la recherche RAG: {str(e)}"
+        print(f"❌ RAG SEARCH ERROR: {error_msg}")
         return error_msg
 
 
-def _store_sources_in_session(sources_data: dict, query: str):
+def _save_rag_sources_to_temp_cache(sources_data: list, query: str, filename: str) -> None:
     """
-    Stocke les sources dans la session Streamlit pour affichage automatique.
+    Sauvegarde les sources RAG dans un cache temporaire global.
+    """
+    global _temp_rag_sources_cache
     
-    Args:
-        sources_data: Données JSON des sources
-        query: Requête originale
-    """
     try:
-        if 'last_rag_sources' not in st.session_state:
-            st.session_state.last_rag_sources = {}
+        if not sources_data:
+            print("⚠️ Aucune source à sauvegarder")
+            return
+            
+        print(f"🔄 Tentative de sauvegarde de {len(sources_data)} sources...")
         
-        st.session_state.last_rag_sources = {
+        # Préparer les données pour l'affichage
+        formatted_sources = {
             "query": query,
-            "sources_data": sources_data,
-            "timestamp": time.time()
+            "filename": filename,
+            "timestamp": time.time(),
+            "results": []
         }
         
-        print(f"📦 RAG Session: Sources stored in session for query: '{query[:50]}...'")
+        for i, (doc, score) in enumerate(sources_data, 1):
+            content = doc.page_content.strip()
+            metadata = doc.metadata or {}
+            page = metadata.get('page', '?')
+            source = metadata.get('source') or metadata.get('filename', filename)
+            relevance = float(1 - score) * 100  # Convert distance to percentage
+            
+            formatted_sources["results"].append({
+                "content": content,
+                "metadata": {
+                    "source": source,
+                    "page": str(page),
+                    "relevance_score": relevance,
+                    "citation_index": i
+                }
+            })
+        
+        # Sauvegarder dans le cache temporaire global
+        _temp_rag_sources_cache.append(formatted_sources)
+        
+        # Garder seulement les 5 dernières recherches
+        if len(_temp_rag_sources_cache) > 5:
+            _temp_rag_sources_cache = _temp_rag_sources_cache[-5:]
+        
+        print(f"✅ Sources sauvegardées dans cache temporaire: {len(formatted_sources['results'])} sources pour '{query}'")
+        
+        # Essayer aussi de sauvegarder dans le session state si possible
+        try:
+            if 'st' in globals() and hasattr(st, 'session_state'):
+                if 'rag_sources_cache' not in st.session_state:
+                    st.session_state.rag_sources_cache = []
+                st.session_state.rag_sources_cache.append(formatted_sources)
+                if len(st.session_state.rag_sources_cache) > 5:
+                    st.session_state.rag_sources_cache = st.session_state.rag_sources_cache[-5:]
+                print("✅ Sources aussi sauvegardées dans session state")
+        except Exception as e:
+            print(f"⚠️ Session state indisponible: {e}")
         
     except Exception as e:
-        print(f"❌ RAG Session: Failed to store sources in session: {e}")
+        print(f"❌ Erreur lors de la sauvegarde des sources: {e}")
+        import traceback
+        traceback.print_exc()
 
 
-def _clear_session_sources():
-    """Nettoie les sources de la session."""
-    try:
-        if 'last_rag_sources' in st.session_state:
-            del st.session_state.last_rag_sources
-            print(f"🧹 RAG Session: Cleared sources from session")
-    except Exception as e:
-        print(f"⚠️ RAG Session: Failed to clear sources: {e}")
-
-
-def get_last_rag_sources():
+def get_latest_rag_sources():
     """
-    Récupère les dernières sources RAG de la session.
+    Récupère les dernières sources RAG sauvegardées (session state ou cache temporaire).
+    """
+    try:
+        # Essayer d'abord le session state
+        if 'st' in globals() and hasattr(st, 'session_state') and 'rag_sources_cache' in st.session_state:
+            if st.session_state.rag_sources_cache:
+                print("📚 Sources récupérées depuis session state")
+                return st.session_state.rag_sources_cache[-1]
+    except:
+        pass
     
-    Returns:
-        Dict contenant les données sources ou None
-    """
+    # Fallback vers le cache temporaire global
     try:
-        return st.session_state.get('last_rag_sources', None)
+        global _temp_rag_sources_cache
+        if _temp_rag_sources_cache:
+            print("📚 Sources récupérées depuis cache temporaire")
+            return _temp_rag_sources_cache[-1]
+    except:
+        pass
+    
+    print("⚠️ Aucune source trouvée dans les caches")
+    return None
+
+
+def clear_rag_sources_cache():
+    """
+    Vide les caches des sources RAG.
+    """
+    global _temp_rag_sources_cache
+    
+    try:
+        # Vider le cache temporaire
+        _temp_rag_sources_cache = []
+        
+        # Vider le session state si possible
+        if 'st' in globals() and hasattr(st, 'session_state') and 'rag_sources_cache' in st.session_state:
+            st.session_state.rag_sources_cache = []
+        
+        print("🧹 Caches des sources RAG vidés")
     except Exception as e:
-        print(f"❌ RAG Session: Failed to get sources from session: {e}")
-        return None
+        print(f"⚠️ Erreur lors du nettoyage des caches: {e}")

@@ -26,8 +26,8 @@ from ui.chat import display_chat_interface
 from ui.components import handle_uploaded_file
 
 
-# Import from multi-agent architecture
-from agents import MultiAgentManager
+# Import from simplified multi-agent architecture
+from agents.agent_manager_multiagent import SimplifiedMultiAgentManager
 import time
 
 # Prevent torch serialization issues
@@ -61,9 +61,9 @@ def initialize_agents(api_key):
                 )
             model = st.session_state.model
 
-            # Initialize multi-agent manager
+            # Initialize simplified multi-agent manager
             if 'agent_manager' not in st.session_state or st.session_state.agent_manager is None:
-                st.session_state.agent_manager = MultiAgentManager(model)
+                st.session_state.agent_manager = SimplifiedMultiAgentManager(model)
                 st.session_state.agent_manager.initialize()
             
             agent_manager = st.session_state.agent_manager
