@@ -14,219 +14,65 @@ from ..config.agent_config import VISUALIZATION_CONFIG
 
 
 @tool
-def data_loader(file_context: str, mode: str = "auto") -> str:
+def load_and_explore_csv(filename: str, explore: bool = True) -> str:
     """
-    Outil de chargement et découverte de données unifié.
-    
-    Combine les capacités de découverte et de chargement de fichiers avec une sélection 
-    intelligente du mode basée sur le contexte d'entrée.
+    Trouve un fichier CSV et indique à l'agent comment le charger.
     
     Args:
-        file_context: Nom de fichier (ex: "data.csv") ou texte descriptif des données recherchées.
-                     Recherche dans le dossier data/csv_temp/ et ses sous-dossiers où sont stockés les fichiers CSV.
-                     Utilisez des noms de fichiers exacts pour un chargement plus rapide: "ventes_2024.csv"
-        mode: Mode d'opération - "load" (charger un fichier spécifique), "discover" (lister tous les fichiers),
-              ou "auto" (par défaut, sélectionne intelligemment le mode selon l'entrée)
+        filename: Nom du fichier CSV à trouver (ex: "titanic.csv")
+        explore: Si True, suggère aussi des commandes d'exploration (défaut: True)
     
     Returns:
-        Pour mode="load" ou auto-détection load:
-            Résumé détaillé des données avec forme, colonnes, aperçu et instructions de chargement.
-            Inclut l'analyse des valeurs manquantes et des conseils d'utilisation.
-        
-        Pour mode="discover" ou auto-détection discovery:
-            Liste des fichiers CSV disponibles avec leurs emplacements et informations de base.
+        Instructions simples pour charger le fichier CSV trouvé
     """
     try:
-        print(f"Recherche de données avec contexte='{file_context}', mode='{mode}'")
-        
-        # Déterminer le mode si auto
-        if mode == "auto":
-            mode = "load" if file_context.endswith('.csv') else "discover"
-        
-        print(f"Mode sélectionné: {mode}")
-        
-        # Se concentrer sur le répertoire CSV temp où sont stockés les fichiers utilisateur
+        # Recherche du fichier dans data/csv_temp
         search_dirs = ['data/csv_temp', './data/csv_temp']
+        found_path = None
         
-        if mode == "discover":
-            return _discover_files(search_dirs)
-        else:  # mode == "load"
-            return _load_file(file_context, search_dirs)
-            
-    except Exception as e:
-        error_msg = f"Une erreur s'est produite lors du chargement des données: {str(e)}"
-        print(error_msg)
-        return error_msg + "\n\nConseil: Essaie data_loader('nom_fichier.csv', mode='discover') pour voir les fichiers disponibles"
-
-
-def _discover_files(search_dirs: list) -> str:
-    """Fonction helper pour découvrir les fichiers CSV dans les répertoires spécifiés."""
-    print("Recherche des fichiers CSV...")
-    found_files = []
-    
-    for directory in search_dirs:
-        if os.path.exists(directory):
-            try:
-                # Recherche récursive des fichiers CSV
+        for directory in search_dirs:
+            if os.path.exists(directory):
                 for root, dirs, files in os.walk(directory):
-                    csv_files = [f for f in files if f.endswith('.csv')]
-                    if csv_files:
-                        print(f"Trouvé {len(csv_files)} fichiers CSV dans {root}")
-                        for csv_file in csv_files:
-                            path = os.path.join(root, csv_file)
-                            try:
-                                # Obtenir les infos de base du fichier
-                                size = os.path.getsize(path) / 1024  # KB
-                                found_files.append({
-                                    'path': path,
-                                    'size': f"{size:.1f} KB",
-                                    'directory': root
-                                })
-                            except Exception as e:
-                                print(f"Erreur lors de la lecture des infos pour {path}: {str(e)}")
-            except PermissionError:
-                print(f"Permission refusée pour le répertoire: {directory}")
-    
-    if not found_files:
-        return """Aucun fichier CSV trouvé dans l'espace de travail.
-
-Suggestions:
-1. Vérifie que les fichiers CSV existent dans l'espace de travail
-2. Vérifie les permissions des fichiers
-3. Assure-toi que les fichiers ont l'extension .csv
-
-Répertoires recherchés:
-- data/csv_temp/
-- ./data/csv_temp/"""
-
-    # Formater la réponse
-    response = ["Voici les fichiers CSV disponibles:"]
-    for file in found_files:
-        response.append(f"\n• {os.path.basename(file['path'])}")
-        response.append(f"  Emplacement: {file['directory']}")
-        response.append(f"  Taille: {file['size']}")
-    
-    response.append("\nPour charger un fichier spécifique, utilise: data_loader('nom_fichier.csv')")
-    print(f"Découverte terminée: {len(found_files)} fichiers trouvés")
-    return "\n".join(response)
-
-
-def _load_file(file_context: str, search_dirs: list) -> str:
-    """Fonction helper pour charger un fichier CSV spécifique."""
-    print(f"Chargement du fichier: {file_context}")
-    possible_paths = []
-    
-    # Si file_context ressemble à un nom de fichier, essayer différents emplacements
-    if file_context.endswith('.csv'):
-        possible_paths = [
-            file_context,  # Chemin direct
-            f"data/{file_context}",  # dossier data
-            f"available/{file_context}",  # dossier available  
-            f"./data/{file_context}",  # dossier data relatif
-            f"./{file_context}",  # répertoire courant
-        ]
+                    if filename in files:
+                        found_path = os.path.join(root, filename)
+                        break
+                if found_path:
+                    break
         
-        # Rechercher aussi récursivement le nom de fichier exact
-        for directory in search_dirs:
-            if os.path.exists(directory):
-                try:
-                    for root, dirs, files in os.walk(directory):
-                        if file_context in files:
-                            possible_paths.append(os.path.join(root, file_context))
-                except PermissionError:
-                    continue
-    else:
-        # Rechercher les fichiers correspondants dans tous les répertoires
-        for directory in search_dirs:
-            if os.path.exists(directory):
-                try:
+        if not found_path:
+            # Lister les fichiers disponibles
+            available_files = []
+            for directory in search_dirs:
+                if os.path.exists(directory):
                     for root, dirs, files in os.walk(directory):
                         csv_files = [f for f in files if f.endswith('.csv')]
-                        for csv_file in csv_files:
-                            if file_context.lower() in csv_file.lower():
-                                possible_paths.append(os.path.join(root, csv_file))
-                except PermissionError:
-                    continue
-    
-    print(f"Tentative de chargement depuis {len(possible_paths)} emplacements possibles...")
-    
-    # Essayer de charger le premier fichier CSV disponible
-    for path in possible_paths:
-        try:
-            if os.path.exists(path):
-                print(f"Chargement du CSV depuis: {path}")
-                df = pd.read_csv(path)
-                print(f"Chargement réussi: {df.shape[0]} lignes, {df.shape[1]} colonnes")
-                return _generate_data_summary(df, path)
-        except Exception as e:
-            print(f"Erreur lors du chargement de {path}: {str(e)}")
-            continue
-    
-    # Si aucun fichier trouvé, passer en mode découverte
-    print("Aucun fichier correspondant trouvé, basculement en mode découverte")
-    return _discover_files(search_dirs)
-
-
-def _generate_data_summary(df: pd.DataFrame, file_path: str) -> str:
-    """Fonction helper pour générer un résumé complet des données."""
-    try:
-        # Conversion sécurisée en chaîne pour l'aperçu des données
-        preview_str = df.head().to_string(max_cols=10, max_rows=5)
+                        available_files.extend(csv_files)
+            
+            if available_files:
+                files_list = ', '.join(available_files)
+                return f"❌ Fichier '{filename}' non trouvé. Fichiers CSV disponibles: {files_list}"
+            else:
+                return "❌ Aucun fichier CSV trouvé dans data/csv_temp/"
         
-        # Analyse sécurisée des valeurs manquantes
-        missing_values = df.isnull().sum()
-        missing_str = missing_values.to_string() if not missing_values.empty else "Aucune valeur manquante"
+        # Créer un nom de variable simple
+        var_name = filename.replace('.csv', '').replace('-', '_').replace(' ', '_') + '_df'
         
-        # Analyse sécurisée des types de données
-        dtypes_str = df.dtypes.to_string()
+        # Instructions simples pour l'agent
+        instructions = f"✅ Fichier trouvé ! Pour charger '{filename}', utilise cette commande:\n\n"
+        instructions += f"{var_name} = pd.read_csv(r'{found_path}')"
         
-        # Résumé sécurisé des données numériques
-        numeric_cols = df.select_dtypes(include=['number']).columns
-        if len(numeric_cols) > 0:
-            numeric_summary = df.describe().to_string(max_cols=10)
-        else:
-            numeric_summary = 'Aucune colonne numérique trouvée'
+        if explore:
+            instructions += f"\n\nPour explorer les données:\n"
+            instructions += f"• {var_name}.head() - Voir les premières lignes\n"
+            instructions += f"• {var_name}.info() - Infos sur les colonnes\n"
+            instructions += f"• {var_name}.describe() - Statistiques descriptives\n"
+            instructions += f"• {var_name}.shape - Taille du dataset\n\n"
+            instructions += f"💡 Conseil: Utilise display_figures() pour afficher tes graphiques et réponds toujours en langage naturel !"
         
-        return f"""Parfait ! J'ai chargé ton fichier CSV '{file_path}' avec succès.
-
-Voici ce que contiennent tes données:
-• Nombre de lignes: {df.shape[0]}
-• Nombre de colonnes: {df.shape[1]}
-• Taille en mémoire: {df.memory_usage(deep=True).sum() / 1024:.1f} KB
-• Colonnes disponibles: {list(df.columns)}
-
-Aperçu des premières lignes:
-{preview_str}
-
-Valeurs manquantes:
-{missing_str}
-
-Types de données:
-{dtypes_str}
-
-Résumé statistique des colonnes numériques:
-{numeric_summary}
-
-Pour utiliser ces données en Python:
-df = pd.read_csv('{file_path}')
-
-Rappel important: Après avoir créé un graphique, n'oublie pas d'utiliser display_figures() pour l'afficher !
-
-Que souhaites-tu analyser dans ces données ?"""
-
+        return instructions
+        
     except Exception as e:
-        error_msg = f"Erreur lors de la génération du résumé: {str(e)}"
-        print(error_msg)
-        return f"""J'ai chargé ton fichier CSV '{file_path}' mais il y a eu un problème pour générer le résumé complet.
-
-Informations de base:
-• {df.shape[0]} lignes, {df.shape[1]} colonnes
-• Colonnes: {list(df.columns)}
-
-Erreur: {error_msg}
-
-Tu peux quand même utiliser tes données avec:
-df = pd.read_csv('{file_path}')"""
+        return f"❌ Erreur lors de la recherche de '{filename}': {str(e)}"
 
 
 @tool
@@ -234,13 +80,15 @@ def display_figures(figures_dict: Dict[str, Any], figure_type: str = "auto") -> 
     """
     Outil d'affichage unifié pour les graphiques matplotlib et plotly.
     
-    Affiche en sécurité plusieurs graphiques tout en gérant la mémoire et en fournissant
-    des retours détaillés. À appeler IMMÉDIATEMENT après avoir créé un graphique.
+    BONNES PRATIQUES SMOLAGENTS INTÉGRÉES:
+    - Gestion d'erreurs détaillée avec messages clairs
+    - Nettoyage automatique de la mémoire
+    - Validation robuste des entrées
     
     Args:
         figures_dict: Dictionnaire associant les noms de graphiques aux objets graphiques.
                      Maximum 10 graphiques par appel pour éviter les problèmes de mémoire.
-                     Utilise des noms descriptifs: {"tendance_ventes": fig1, "correlation": fig2}
+                     Utilise des noms descriptifs: {"analyse_ventes": fig1, "correlation": fig2}
                      
         figure_type: Type de graphiques à afficher:
                     - "matplotlib": Pour les graphiques matplotlib/seaborn
@@ -248,156 +96,187 @@ def display_figures(figures_dict: Dict[str, Any], figure_type: str = "auto") -> 
                     - "auto": (défaut) Détecte automatiquement le type de graphique
     
     Returns:
-        Message de statut sur les graphiques affichés avec succès ou informations d'erreur
-        spécifiques avec conseils de dépannage.
+        Message de statut détaillé avec informations de débogage selon les bonnes pratiques smolagents.
     """
     try:
-        print(f"Affichage de {len(figures_dict) if isinstance(figures_dict, dict) else 'invalide'} graphiques")
-        
-        # Valider l'entrée
+        # Validation approfondie avec messages informatifs (bonne pratique smolagents)
         if not isinstance(figures_dict, dict):
-            error_msg = f"""Je m'attendais à recevoir un dictionnaire de graphiques, mais j'ai reçu: {type(figures_dict)}
-
-Usage correct:
-1. Pour matplotlib:
-   fig, ax = plt.subplots()
-   ax.plot(data)
-   display_figures({{"nom_graphique": fig}})
-
-2. Pour seaborn:
-   plot = sns.histplot(data)
-   fig = plot.get_figure()
-   display_figures({{"nom_graphique": fig}})
-
-3. Pour plotly:
-   fig = go.Figure()
-   display_figures({{"nom_graphique": fig}})
-
-Attention: Ne passe pas la librairie elle-même (plt, sns, ou go)"""
-            print(error_msg)
-            return error_msg
+            error_msg = f"❌ ERREUR TYPE: Attendu dict, reçu {type(figures_dict)}"
+            return error_msg + "\\n\\n🔧 Utilise un dictionnaire: display_figures({'nom': figure_object})"
         
         if not figures_dict:
-            warning_msg = """Attention: Dictionnaire de graphiques vide.
-
-Assure-toi de créer des graphiques avant de les afficher. Exemple:
-fig, ax = plt.subplots()
-ax.plot(data)
-display_figures({{"nom_graphique": fig}})"""
-            print(warning_msg)
-            return warning_msg
+            warning_msg = "⚠️ ATTENTION: Dictionnaire de graphiques vide"
+            return warning_msg + "\\n\\n🔧 Crée d'abord tes graphiques avec matplotlib ou plotly"
         
         # Vérifier la limite de graphiques
         max_figures = VISUALIZATION_CONFIG.get("max_figures_per_call", 10)
         if len(figures_dict) > max_figures:
-            error_msg = f"""Trop de graphiques ({len(figures_dict)}). Maximum {max_figures} autorisés par appel.
-
-Solution: Divise en plusieurs appels avec ≤{max_figures} graphiques chacun. Exemple:
-# Premier appel
-display_figures({{"graphique1": fig1, "graphique2": fig2}})
-
-# Deuxième appel
-display_figures({{"graphique3": fig3, "graphique4": fig4}})"""
-            print(error_msg)
-            return error_msg
+            error_msg = f"❌ LIMITE DÉPASSÉE: {len(figures_dict)} graphiques (max {max_figures})"
+            return error_msg + f"\\n\\n🔧 Divise en plusieurs appels avec ≤{max_figures} graphiques"
         
         displayed_count = 0
         failed_figures = []
         
         for fig_name, fig_obj in figures_dict.items():
             try:
-                print(f"Traitement du graphique: {fig_name} (type: {type(fig_obj)})")
-                
                 # Déterminer le type de graphique si auto
                 current_figure_type = figure_type
                 if current_figure_type == "auto":
                     if isinstance(fig_obj, go.Figure):
                         current_figure_type = "plotly"
-                        print(f"Détection automatique: graphique plotly")
                     else:
                         current_figure_type = "matplotlib"
-                        print(f"Détection automatique: graphique matplotlib")
                 
                 # Gérer les graphiques matplotlib
                 if current_figure_type == "matplotlib":
                     # Gérer les objets axes en récupérant leur figure
                     if hasattr(fig_obj, 'get_figure'):
-                        print(f"Conversion axes vers figure pour: {fig_name}")
                         fig_obj = fig_obj.get_figure()
                     
                     if hasattr(fig_obj, 'savefig'):
                         st.pyplot(fig_obj)
-                        plt.close(fig_obj)  # Fermer pour libérer la mémoire
+                        plt.close(fig_obj)  # Libérer la mémoire (bonne pratique)
                         displayed_count += 1
-                        print(f"Graphique matplotlib affiché avec succès: {fig_name}")
                     else:
-                        failed_figures.append(f"""{fig_name}: Ce n'est pas un objet graphique matplotlib valide (type: {type(fig_obj)})
-
-Vérifications:
-1. Assure-toi de passer l'objet figure, pas la librairie:
-   fig, ax = plt.subplots()  # Correct
-   display_figures({{"nom": fig}})  # Correct
-   display_figures({{"nom": plt}})  # Incorrect
-
-2. Pour les graphiques seaborn, récupère l'objet figure:
-   plot = sns.histplot(data)
-   fig = plot.get_figure()  # Important!
-   display_figures({{"nom": fig}})""")
+                        failed_figures.append(f"{fig_name}: Objet matplotlib invalide")
                 
                 # Gérer les graphiques plotly
                 elif current_figure_type == "plotly":
                     if isinstance(fig_obj, go.Figure):
                         st.plotly_chart(fig_obj, use_container_width=True)
                         displayed_count += 1
-                        print(f"Graphique plotly affiché avec succès: {fig_name}")
                     else:
-                        failed_figures.append(f"""{fig_name}: Ce n'est pas un objet graphique plotly valide (type: {type(fig_obj)})
-
-Vérifications:
-1. Assure-toi de passer un objet go.Figure:
-   fig = go.Figure()  # Correct
-   display_figures({{"nom": fig}})  # Correct
-   display_figures({{"nom": go}})   # Incorrect""")
+                        failed_figures.append(f"{fig_name}: Objet plotly invalide")
                 
                 else:
-                    failed_figures.append(f"""{fig_name}: Type de graphique invalide '{current_figure_type}'
-
-Types valides:
-- "matplotlib": Pour les graphiques matplotlib/seaborn
-- "plotly": Pour les graphiques plotly
-- "auto": (défaut) Détection automatique du type""")
+                    failed_figures.append(f"{fig_name}: Type invalide '{current_figure_type}'")
                     
             except Exception as e:
-                error_details = f"""{fig_name}: {str(e)}
-
-Vérifications:
-1. Ton objet graphique est-il valide ?
-2. Passes-tu bien l'objet figure, pas la librairie ?
-3. Pour seaborn, utilise .get_figure()
-4. Pour plotly, assure-toi de passer une instance go.Figure
-5. Type d'erreur: {type(e).__name__}"""
-                failed_figures.append(error_details)
-                print(f"Erreur lors de l'affichage de {fig_name}: {str(e)}")
-                st.error(f"Erreur lors de l'affichage du graphique {fig_name}: {str(e)}")
+                failed_figures.append(f"{fig_name}: {str(e)}")
+                st.error(f"Erreur graphique {fig_name}: {str(e)}")
         
-        # Préparer le message de résultat
-        result_parts = [f"Résultats de l'affichage:"]
-        result_parts.append(f"✓ {displayed_count} graphique(s) affiché(s) avec succès")
+        # Message de résultat détaillé (bonne pratique smolagents)
+        result_parts = [f"📊 RÉSULTATS D'AFFICHAGE:"]
+        result_parts.append(f"✅ {displayed_count} graphique(s) affiché(s) avec succès")
         
         if failed_figures:
-            result_parts.append(f"✗ {len(failed_figures)} graphique(s) n'ont pas pu être affichés")
-            result_parts.append("Détails des échecs:")
+            result_parts.append(f"❌ {len(failed_figures)} graphique(s) ont échoué:")
             for failure in failed_figures:
-                result_parts.append(f"   - {failure}")
+                result_parts.append(f"   • {failure}")
+            result_parts.append("\\n🔧 CONSEILS DE DÉBOGAGE:")
+            result_parts.append("   • Vérifies-tu que tes objets graphiques sont valides ?")
+            result_parts.append("   • Pour matplotlib: utilise fig, ax = plt.subplots()")
+            result_parts.append("   • Pour plotly: utilise fig = go.Figure()")
         
         if displayed_count > 0:
-            result_parts.append(f"\nMémoire libérée pour {displayed_count} graphique(s)")
+            result_parts.append(f"\\n🧹 Mémoire libérée pour {displayed_count} graphique(s)")
         
-        final_result = "\n".join(result_parts)
-        print(f"Affichage terminé: {displayed_count} réussis, {len(failed_figures)} échoués")
+        final_result = "\\n".join(result_parts)
         return final_result
         
     except Exception as e:
-        error_msg = f"Erreur critique lors de l'affichage: {str(e)}"
-        print(error_msg)
-        return error_msg + "\n\nConseil: Vérifie que tu passes des objets graphiques valides dans un dictionnaire" 
+        error_msg = f"💥 ERREUR CRITIQUE: {str(e)}"
+        return error_msg + "\\n\\n🔧 Assure-toi de passer des objets graphiques valides dans un dictionnaire"
+
+
+# ============ OUTILS DÉPRÉCIÉS - COMPATIBILITÉ ASCENDANTE ============
+# Ces outils restent pour la compatibilité mais ne devraient plus être utilisés
+
+@tool  
+def data_loader(file_context: str, mode: str = "auto") -> str:
+    """
+    [DÉPRÉCIÉ] Outil legacy pour compatibilité ascendante.
+    
+    ⚠️ UTILISE PLUTÔT: load_and_explore_csv() qui suit les bonnes pratiques smolagents.
+    
+    Cet outil reste disponible uniquement pour compatibilité avec l'ancien code.
+    Il redirige vers le nouvel outil unifié load_and_explore_csv.
+    
+    Args:
+        file_context: Nom du fichier CSV à charger ou contexte de recherche
+        mode: Mode de fonctionnement (défaut: "auto")
+    
+    Returns:
+        Code Python généré pour charger ou découvrir les fichiers CSV
+    """
+    # Rediriger vers le nouvel outil unifié
+    if file_context.endswith('.csv'):
+        return load_and_explore_csv(file_context, explore=True)
+    else:
+        # Mode découverte - générer du code de découverte
+        return '''# 🔍 DÉCOUVERTE DES FICHIERS CSV DISPONIBLES
+import os
+
+print("📁 Recherche des fichiers CSV...")
+found_files = []
+search_dirs = ['data/csv_temp', './data/csv_temp']
+
+for directory in search_dirs:
+    if os.path.exists(directory):
+        for root, dirs, files in os.walk(directory):
+            csv_files = [f for f in files if f.endswith('.csv')]
+            for csv_file in csv_files:
+                found_files.append((csv_file, os.path.join(root, csv_file)))
+
+if found_files:
+    print("✅ Fichiers CSV disponibles:")
+    for i, (filename, filepath) in enumerate(found_files, 1):
+        size = os.path.getsize(filepath) / 1024
+        print(f"  {i}. {filename} ({size:.1f} KB)")
+    print("\\n🚀 Pour charger un fichier:")
+    print("   • Utilise load_and_explore_csv('nom_fichier.csv')")
+else:
+    print("❌ Aucun fichier CSV trouvé dans data/csv_temp/")'''
+
+
+@tool
+def get_dataframe(dataset_name: str) -> str:
+    """
+    [DÉPRÉCIÉ] Outil legacy pour compatibilité ascendante.
+    
+    ⚠️ UTILISE PLUTÔT: load_and_explore_csv() qui gère tout automatiquement.
+    
+    Cet outil reste disponible uniquement pour compatibilité avec l'ancien code.
+    
+    Args:
+        dataset_name: Nom du dataset à récupérer depuis la session Streamlit
+    
+    Returns:
+        Code Python généré pour accéder au dataset ou message d'erreur
+    """
+    # Code de compatibilité minimal
+    return f'''# ⚠️ FONCTION DÉPRÉCIÉE - get_dataframe()
+import streamlit as st
+
+# Vérifier si le dataset existe en session
+df_key = 'dataframe_{dataset_name}'
+
+if 'st' in globals() and hasattr(st, 'session_state') and df_key in st.session_state:
+    {dataset_name}_df = st.session_state[df_key]
+    print(f"✅ Dataset '{dataset_name}' récupéré depuis la session")
+    print(f"📏 Forme: {{{dataset_name}_df.shape[0]}} lignes × {{{dataset_name}_df.shape[1]}} colonnes")
+    print(f"🎯 Variable disponible: {dataset_name}_df")
+else:
+    print(f"❌ Dataset '{dataset_name}' non trouvé en session")
+    print("🚀 SOLUTION: Utilise load_and_explore_csv('fichier.csv') à la place")
+    print("   Cette méthode est plus fiable et suit les bonnes pratiques")'''
+
+
+@tool
+def load_csv_data(filename: str) -> str:
+    """
+    [DÉPRÉCIÉ] Outil legacy pour compatibilité ascendante.
+    
+    ⚠️ UTILISE PLUTÔT: load_and_explore_csv() qui est plus complet et optimisé.
+    
+    Cet outil reste disponible uniquement pour compatibilité avec l'ancien code.
+    Il redirige vers le nouvel outil unifié.
+    
+    Args:
+        filename: Nom du fichier CSV à charger
+    
+    Returns:
+        Code Python généré pour charger le fichier CSV
+    """
+    # Rediriger vers le nouvel outil unifié (sans exploration par défaut pour compatibilité)
+    return load_and_explore_csv(filename, explore=False) 

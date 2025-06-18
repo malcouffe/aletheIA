@@ -25,10 +25,11 @@ from ..config.agent_config import (
     PREPROMPT_CONFIG
 )
 from ..core.embedding import get_embedding_function
+from ..tools.unified_data_tools import load_and_explore_csv, display_figures
 from ..tools import (
+    rag_search_simple,
     data_loader,
-    display_figures,
-    rag_search_simple
+    get_dataframe
 )
 from ..tools.enhanced_web_tools import (
     enhanced_visit_webpage,
@@ -52,7 +53,7 @@ class SimplifiedAgentFactory:
         enhanced_description = SYSTEM_COMMUNICATION_PROMPT + "\n\n" + AGENT_DESCRIPTIONS["data_analyst"]
         
         agent = CodeAgent(
-            tools=[data_loader, display_figures],
+            tools=[load_and_explore_csv, display_figures, data_loader, get_dataframe],
             model=self.model,
             additional_authorized_imports=DATA_ANALYST_IMPORTS,
             max_steps=config.max_steps,
@@ -80,6 +81,7 @@ class SimplifiedAgentFactory:
             verbosity_level=config.verbosity_level,
             name="document_agent",
             description=enhanced_description,
+            stream_outputs=config.stream_outputs,
             planning_interval=config.planning_interval
         )
 
@@ -115,7 +117,9 @@ class SimplifiedAgentFactory:
             verbosity_level=config.verbosity_level,
             name="search_agent",
             description=enhanced_description,
-            planning_interval=config.planning_interval
+            stream_outputs=config.stream_outputs,
+            planning_interval=config.planning_interval,
+            use_structured_outputs_internally=config.use_structured_outputs_internally
         )
 
         return agent
